@@ -26,13 +26,39 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/gdamore/tcell/v2"
 	"tailscale.com/client/tailscale"
 	"tailscale.com/tsnet"
+	"tailscale.com/types/logger"
 )
+
+var (
+	verbose     = flag.Bool("verbose", false, "verbose")
+	presentOnly = flag.Bool("present", false, "present only")
+)
+
+var slides = []string{
+	"Lingo Bingo\n\nBrad Fitzpatrick",
+	"play.bingo.ts.net",
+	"oh hi",
+}
 
 func main() {
 	flag.Parse()
-	s := new(tsnet.Server)
+
+	bs := &bingoServer{
+		gameEv: make(chan any, 8),
+	}
+
+	if *presentOnly {
+		log.Fatal(bs.present())
+	}
+	s := &tsnet.Server{
+		Logf: logger.Discard,
+	}
+	if *verbose {
+		s.Logf = log.Printf
+	}
 	defer s.Close()
 
 	ln80, err := s.Listen("tcp", ":80")
@@ -41,13 +67,7 @@ func main() {
 	}
 	defer ln80.Close()
 
-	// ln443, err := s.Listen("tcp", ":443")
-	// if err != nil {
-	// 	log.Fatal(err)
-	// }
-	// defer ln443.Close()
-
-	lc, err := s.LocalClient()
+	bs.lc, err = s.LocalClient()
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -58,24 +78,117 @@ func main() {
 	}
 	defer lnFunnel.Close()
 
-	// lnTLS := tls.NewListener(ln443, &tls.Config{
-	// 	GetCertificate: lc.GetCertificate,
-	// })
-
-	bs := &bingoServer{
-		lc: lc,
-	}
-
 	errc := make(chan error, 1)
 	go func() { errc <- http.Serve(lnFunnel, bs) }()
-	//	go func() { errc <- http.ServeTLS(lnTLS, bs, "", "") }()
 	go func() { errc <- http.Serve(ln80, bs) }()
+	go func() { errc <- bs.present() }()
 
 	log.Fatal(<-errc)
 }
 
+func (bs *bingoServer) advanceSlide(delta int) {
+	next := bs.slide + delta
+	if next < 0 {
+		next = 0
+	}
+	if next >= len(slides) {
+		next = len(slides) - 1
+	}
+	bs.setSlide(next)
+}
+
+func (bs *bingoServer) setSlide(n int) {
+	bs.slide = n
+	bs.msg = slides[n]
+	bs.render()
+}
+
+func (bs *bingoServer) render() {
+	bs.paintWithMsg(bs.msg)
+}
+
+func (bs *bingoServer) paintWithMsg(msg string) {
+	sc := bs.sc
+	sc.Fill(' ', tcell.StyleDefault)
+	width, height := sc.Size()
+	mid := width / 2
+	start := mid - len(msg)/2
+	if start < 0 {
+		start = 0
+	}
+	midy := height/2 - 3
+	if midy < 0 {
+		midy = 0
+	}
+	for i, r := range msg {
+		sc.SetContent(start+i, midy, r, nil, tcell.StyleDefault)
+	}
+	sc.Show()
+}
+
+func (bs *bingoServer) present() error {
+	var err error
+	bs.sc, err = tcell.NewScreen()
+	if err != nil {
+		return err
+	}
+	if err := bs.sc.Init(); err != nil {
+		return err
+	}
+
+	bs.setSlide(0)
+
+	evc := make(chan tcell.Event, 8)
+	quitc := make(chan struct{})
+	go func() {
+		bs.sc.Clear()
+
+		for {
+			select {
+			case ev := <-bs.gameEv:
+				switch ev := ev.(type) {
+				case string:
+					bs.paintWithMsg(fmt.Sprintf("Player: %q", ev))
+				}
+			case ev := <-evc:
+				switch ev := ev.(type) {
+				case *tcell.EventKey:
+					k := ev.Key()
+					switch k {
+					case tcell.KeyDown, tcell.KeyRight:
+						bs.advanceSlide(+1)
+					case tcell.KeyUp, tcell.KeyLeft:
+						bs.advanceSlide(-1)
+					case tcell.KeyRune:
+						r := ev.Rune()
+						bs.paintWithMsg(fmt.Sprintf("Rune: %q", r))
+						if r == 'q' {
+							bs.sc.Fini()
+							os.Exit(0)
+						}
+					default:
+						bs.paintWithMsg(fmt.Sprintf("Key: %d", k))
+					}
+				case *tcell.EventResize:
+					bs.render()
+				default:
+					bs.paintWithMsg(fmt.Sprintf("ev: %T: %v", ev, ev))
+				}
+			}
+		}
+	}()
+	bs.sc.ChannelEvents(evc, quitc)
+
+	select {}
+}
+
 type bingoServer struct {
-	lc *tailscale.LocalClient
+	lc     *tailscale.LocalClient
+	gameEv chan any
+
+	sc    tcell.Screen
+	slide int
+	msg   string
 }
 
 var crc64Table = crc64.MakeTable(crc64.ISO)
@@ -85,9 +198,11 @@ func (s *bingoServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	var gameBoard string
 	if who != nil {
 		if firstLabel(who.Node.ComputedName) == "funnel-ingress-node" {
-			log.Printf("Funnel headers: %q", r.Header)
+			//log.Printf("Funnel headers: %q", r.Header)
 		}
 		gameBoard = who.UserProfile.LoginName
+
+		s.gameEv <- who.UserProfile.LoginName
 	} else {
 		if host, _, err := net.SplitHostPort(r.RemoteAddr); err != nil {
 			gameBoard = host
@@ -96,7 +211,7 @@ func (s *bingoServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	log.Printf("TLS=%v, Board: %q", r.TLS != nil, gameBoard)
+	//log.Printf("TLS=%v, Board: %q", r.TLS != nil, gameBoard)
 
 	letters := []byte("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
 
