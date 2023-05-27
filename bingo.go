@@ -36,6 +36,7 @@ import (
 var (
 	verbose     = flag.Bool("verbose", false, "verbose")
 	presentOnly = flag.Bool("present", false, "present only")
+	startSlide  = flag.Int("slide", 0, "slide to start on (1-based)")
 )
 
 type slide struct {
@@ -56,10 +57,19 @@ var slides = []slide{
 	ss("BINGO"),
 	ss("more specifically,"),
 	ss("Lingo Bingo"),
+	ss("Bingo?"),
+	ss("🧗"),
+	ss("⚪ ⚪ ⚪ ⚪ ⚪\n⚪ ⚪ ⚪ ⚪ ⚪\n⚪ ⚪ ⚪ ⚪ ⚪\n⚪ ⚪ ⚪ ⚪ ⚪\n⚪ ⚪ ⚪ ⚪ ⚪\n"),
+	ss("⚪ 🔴 ⚪ ⚪ ⚪\n⚪ 🔴 ⚪ ⚪ ⚪\n⚪ 🔴 ⚪ ⚪ ⚪\n⚪ 🔴 ⚪ ⚪ ⚪\n⚪ 🔴 ⚪ ⚪ ⚪\n"),
+	ss("⚪ ⚪ ⚪ ⚪ ⚪\n⚪ ⚪ ⚪ ⚪ ⚪\n⚪ ⚪ ⚪ ⚪ ⚪\n🔴 🔴 🔴 🔴 🔴\n⚪ ⚪ ⚪ ⚪ ⚪\n"),
+	ss("🔴 ⚪ ⚪ ⚪ ⚪\n⚪ 🔴 ⚪ ⚪ ⚪\n⚪ ⚪ 🔴 ⚪ ⚪\n⚪ ⚪ ⚪ 🔴 ⚪\n⚪ ⚪ ⚪ ⚪ 🔴\n"),
+	ss("s/🔢/🔤/g"),
+	ss("got it?"),
 	ss("play.bingo.ts.net"),
 	ss("play.bingo.ts.net\n\n(laptop, phone)"),
 	ss("play.bingo.ts.net\n\n(over Tailscale Funnel ✨)"),
 	ss("play.bingo.ts.net\n\n(bonus: use Tailscale)"),
+	ss("play.bingo.ts.net\n\n⏳ 0:nn"),
 }
 
 func main() {
@@ -67,6 +77,9 @@ func main() {
 
 	bs := &bingoServer{
 		gameEv: make(chan any, 8),
+	}
+	if *startSlide > 0 {
+		bs.slide = *startSlide - 1
 	}
 
 	if *presentOnly {
@@ -121,11 +134,29 @@ func (bs *bingoServer) setSlide(n int) {
 	bs.render()
 }
 
+func (bs *bingoServer) writeString(x, y int, s string, optStyle ...tcell.Style) {
+	style := tcell.StyleDefault
+	if len(optStyle) > 0 {
+		if len(optStyle) > 1 {
+			panic("too many styles")
+		}
+		style = optStyle[0]
+	}
+
+	for _, r := range s {
+		bs.sc.SetContent(x, y, r, nil, style)
+		x += runewidth.RuneWidth(r)
+	}
+}
+
 func (bs *bingoServer) render() {
 	bs.paintWithMsg(slides[bs.slide].msg)
+	width, height := bs.sc.Size()
 	if bs.slide > 3 {
-		_, height := bs.sc.Size()
-		bs.sc.SetContent(0, height-1, '🔤', nil, tcell.StyleDefault)
+		bs.writeString(0, height-1, "🔤")
+	}
+	if bs.slide > 0 {
+		bs.writeString(width-4, height-1, fmt.Sprintf("🛝%d", bs.slide+1), tcell.StyleDefault.Foreground(tcell.ColorDarkGray))
 	}
 	bs.sc.Sync()
 }
@@ -147,11 +178,7 @@ func (bs *bingoServer) paintWithMsg(msg string) {
 		if start < 0 {
 			start = 0
 		}
-		x := start
-		for _, r := range lineMsg {
-			sc.SetContent(x, midy+y, r, nil, tcell.StyleDefault)
-			x += runewidth.RuneWidth(r)
-		}
+		bs.writeString(start, midy+y, lineMsg)
 	}
 }
 
@@ -165,7 +192,7 @@ func (bs *bingoServer) present() error {
 		return err
 	}
 
-	bs.setSlide(0)
+	bs.advanceSlide(0)
 
 	evc := make(chan tcell.Event, 8)
 	quitc := make(chan struct{})
@@ -191,8 +218,15 @@ func (bs *bingoServer) present() error {
 						bs.advanceSlide(-1)
 					case tcell.KeyRune:
 						r := ev.Rune()
-						if r == '.' {
+						switch r {
+						case '.':
 							bs.advanceSlide(0)
+							continue
+						case ' ':
+							bs.advanceSlide(1)
+							continue
+						case '0':
+							bs.setSlide(0)
 							continue
 						}
 						bs.paintWithMsg(fmt.Sprintf("Rune: %q", r))
