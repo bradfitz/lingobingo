@@ -27,6 +27,7 @@ import (
 	"strings"
 
 	"github.com/gdamore/tcell/v2"
+	"github.com/mattn/go-runewidth"
 	"tailscale.com/client/tailscale"
 	"tailscale.com/tsnet"
 	"tailscale.com/types/logger"
@@ -37,10 +38,28 @@ var (
 	presentOnly = flag.Bool("present", false, "present only")
 )
 
-var slides = []string{
-	"Lingo Bingo\n\nBrad Fitzpatrick",
-	"play.bingo.ts.net",
-	"oh hi",
+type slide struct {
+	msg string
+}
+
+func ss(msg string) slide {
+	return slide{msg: msg}
+}
+
+var slides = []slide{
+	ss("A lightning talk\n⚡️\nBrad Fitzpatrick"),
+	ss("oh hi"),
+	ss("talks talks talks"),
+	ss("talks are fun"),
+	ss("but let's play a game"),
+	ss("🎮🎲?"),
+	ss("BINGO"),
+	ss("more specifically,"),
+	ss("Lingo Bingo"),
+	ss("play.bingo.ts.net"),
+	ss("play.bingo.ts.net\n\n(laptop, phone)"),
+	ss("play.bingo.ts.net\n\n(over Tailscale Funnel ✨)"),
+	ss("play.bingo.ts.net\n\n(bonus: use Tailscale)"),
 }
 
 func main() {
@@ -99,31 +118,41 @@ func (bs *bingoServer) advanceSlide(delta int) {
 
 func (bs *bingoServer) setSlide(n int) {
 	bs.slide = n
-	bs.msg = slides[n]
 	bs.render()
 }
 
 func (bs *bingoServer) render() {
-	bs.paintWithMsg(bs.msg)
+	bs.paintWithMsg(slides[bs.slide].msg)
+	if bs.slide > 3 {
+		_, height := bs.sc.Size()
+		bs.sc.SetContent(0, height-1, '🔤', nil, tcell.StyleDefault)
+	}
+	bs.sc.Sync()
 }
 
 func (bs *bingoServer) paintWithMsg(msg string) {
 	sc := bs.sc
 	sc.Fill(' ', tcell.StyleDefault)
+
 	width, height := sc.Size()
-	mid := width / 2
-	start := mid - len(msg)/2
-	if start < 0 {
-		start = 0
-	}
-	midy := height/2 - 3
+
+	lines := strings.Split(msg, "\n")
+	midy := height/2 - 1 - len(lines)/2
 	if midy < 0 {
 		midy = 0
 	}
-	for i, r := range msg {
-		sc.SetContent(start+i, midy, r, nil, tcell.StyleDefault)
+	for y, lineMsg := range lines {
+		midx := width / 2
+		start := midx - runewidth.StringWidth(lineMsg)/2
+		if start < 0 {
+			start = 0
+		}
+		x := start
+		for _, r := range lineMsg {
+			sc.SetContent(x, midy+y, r, nil, tcell.StyleDefault)
+			x += runewidth.RuneWidth(r)
+		}
 	}
-	sc.Show()
 }
 
 func (bs *bingoServer) present() error {
@@ -149,6 +178,7 @@ func (bs *bingoServer) present() error {
 				switch ev := ev.(type) {
 				case string:
 					bs.paintWithMsg(fmt.Sprintf("Player: %q", ev))
+					bs.sc.Sync()
 				}
 			case ev := <-evc:
 				switch ev := ev.(type) {
@@ -161,18 +191,25 @@ func (bs *bingoServer) present() error {
 						bs.advanceSlide(-1)
 					case tcell.KeyRune:
 						r := ev.Rune()
+						if r == '.' {
+							bs.advanceSlide(0)
+							continue
+						}
 						bs.paintWithMsg(fmt.Sprintf("Rune: %q", r))
+						bs.sc.Sync()
 						if r == 'q' {
 							bs.sc.Fini()
 							os.Exit(0)
 						}
 					default:
 						bs.paintWithMsg(fmt.Sprintf("Key: %d", k))
+						bs.sc.Sync()
 					}
 				case *tcell.EventResize:
 					bs.render()
 				default:
 					bs.paintWithMsg(fmt.Sprintf("ev: %T: %v", ev, ev))
+					bs.sc.Sync()
 				}
 			}
 		}
@@ -188,7 +225,6 @@ type bingoServer struct {
 
 	sc    tcell.Screen
 	slide int
-	msg   string
 }
 
 var crc64Table = crc64.MakeTable(crc64.ISO)
