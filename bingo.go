@@ -41,14 +41,25 @@ var (
 )
 
 type slide struct {
+	idx int // 0-based
 	msg string
 	id  slideID // set for certain key slides
 }
 
+func (s *slide) OnOrAfter(id slideID) bool {
+	target, ok := slideByID[id]
+	if !ok {
+		panic("unknown slide id: " + string(id))
+	}
+	return s.idx >= target.idx
+}
+
 type slideID string
 
-func ss(msg string, arg ...any) slide {
-	s := slide{msg: msg}
+var slideGameOn = slideID("game-on")
+
+func ss(msg string, arg ...any) *slide {
+	s := &slide{msg: msg}
 	for _, a := range arg {
 		switch v := a.(type) {
 		case slideID:
@@ -60,7 +71,7 @@ func ss(msg string, arg ...any) slide {
 	return s
 }
 
-var slides = []slide{
+var slides = []*slide{
 	ss("A lightning talk\n⚡️\nBrad Fitzpatrick"),
 	ss("oh hi\nintros later"),
 	ss("talks talks talks"),
@@ -97,8 +108,19 @@ var slides = []slide{
 	ss("play.bingo.ts.net\n\n⏳ -:--\nthen pandemic + kids 😅"),
 	ss("play.bingo.ts.net\n\n⏳ -:--\n🌲🏡🏔️"),
 	ss("play.bingo.ts.net\n\n⏳ -:--\n"),
-	ss("Game on! 🏒"),
+	ss("Game on! 🏒", slideGameOn),
 	ss("tailscaled"),
+}
+
+var slideByID = map[slideID]*slide{}
+
+func init() {
+	for i, s := range slides {
+		s.idx = i
+		if s.id != "" {
+			slideByID[s.id] = s
+		}
+	}
 }
 
 func main() {
@@ -217,14 +239,18 @@ func (bs *bingoServer) render() {
 
 	bs.paintWithMsg(msg)
 	width, height := bs.sc.Size()
-	if bs.slide > 3 {
-		bs.writeString(0, height-1, "🔤")
-	}
-	if bs.showSize {
-		bs.writeString(10, 0, fmt.Sprintf("%dx%d", width, height), tcell.StyleDefault.Foreground(tcell.ColorDarkGray))
+	if curSlide.OnOrAfter(slideGameOn) {
+		bs.writeString(width/2-1, height-1, fmt.Sprintf("🔤%d", bs.numLetters), tcell.StyleDefault)
 	}
 	if bs.slide > 0 {
 		bs.writeString(width-4, height-1, fmt.Sprintf("🛝%d", bs.slide+1), tcell.StyleDefault)
+	}
+	if bs.showSize {
+		bs.writeString(0, 0, "┏", tcell.StyleDefault)
+		bs.writeString(width-1, 0, "┓", tcell.StyleDefault)
+		bs.writeString(0, height-1, "┗", tcell.StyleDefault)
+		bs.writeString(width-1, height-1, "┛", tcell.StyleDefault)
+		bs.writeString(1, 1, fmt.Sprintf("%dx%d", width, height), tcell.StyleDefault.Foreground(tcell.ColorDarkGray))
 	}
 	bs.sc.Sync()
 }
@@ -306,6 +332,7 @@ func (bs *bingoServer) present() error {
 						case 's':
 							bs.showSize = !bs.showSize
 							bs.render()
+							continue
 						case 'q':
 							was := bs.quitKey
 							bs.quitKey = bs.quitKey[:0]
@@ -348,10 +375,11 @@ type bingoServer struct {
 	sc    tcell.Screen
 	slide int
 
-	quitKey   []time.Time
-	secRemain int
-	showSize  bool
-	clock     *time.Timer
+	quitKey    []time.Time
+	secRemain  int
+	showSize   bool
+	numLetters int
+	clock      *time.Timer
 }
 
 func (s *bingoServer) startClock() {
