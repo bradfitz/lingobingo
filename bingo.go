@@ -25,6 +25,7 @@ import (
 	"reflect"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/gdamore/tcell/v2"
 	"github.com/mattn/go-runewidth"
@@ -41,35 +42,63 @@ var (
 
 type slide struct {
 	msg string
+	id  slideID // set for certain key slides
 }
 
-func ss(msg string) slide {
-	return slide{msg: msg}
+type slideID string
+
+func ss(msg string, arg ...any) slide {
+	s := slide{msg: msg}
+	for _, a := range arg {
+		switch v := a.(type) {
+		case slideID:
+			s.id = v
+		default:
+			panic(fmt.Sprintf("unknown type %T", a))
+		}
+	}
+	return s
 }
 
 var slides = []slide{
-	ss("A lightning talk\n⚡️\nBrad Fitzpatrick"),
-	ss("oh hi"),
+	ss("A lightning talk\n⚡️\nBrad Fitzpatrick\n"),
+	ss("oh hi\nintros later"),
 	ss("talks talks talks"),
 	ss("talks are fun"),
-	ss("but let's play a game"),
-	ss("🎮🎲?"),
+	ss("but let's play a game\n🎮🎲?"),
 	ss("BINGO"),
 	ss("more specifically,"),
-	ss("Lingo Bingo"),
-	ss("Bingo?"),
+	ss("LINGO BINGO"),
+	ss("Bingo?\n🤨"),
 	ss("🧗"),
-	ss("⚪ ⚪ ⚪ ⚪ ⚪\n⚪ ⚪ ⚪ ⚪ ⚪\n⚪ ⚪ ⚪ ⚪ ⚪\n⚪ ⚪ ⚪ ⚪ ⚪\n⚪ ⚪ ⚪ ⚪ ⚪\n"),
-	ss("⚪ 🔴 ⚪ ⚪ ⚪\n⚪ 🔴 ⚪ ⚪ ⚪\n⚪ 🔴 ⚪ ⚪ ⚪\n⚪ 🔴 ⚪ ⚪ ⚪\n⚪ 🔴 ⚪ ⚪ ⚪\n"),
-	ss("⚪ ⚪ ⚪ ⚪ ⚪\n⚪ ⚪ ⚪ ⚪ ⚪\n⚪ ⚪ ⚪ ⚪ ⚪\n🔴 🔴 🔴 🔴 🔴\n⚪ ⚪ ⚪ ⚪ ⚪\n"),
-	ss("🔴 ⚪ ⚪ ⚪ ⚪\n⚪ 🔴 ⚪ ⚪ ⚪\n⚪ ⚪ 🔴 ⚪ ⚪\n⚪ ⚪ ⚪ 🔴 ⚪\n⚪ ⚪ ⚪ ⚪ 🔴\n"),
+	ss("🚢"),
+	ss("Ⓑ  Ⓘ  Ⓝ  Ⓖ  Ⓞ  \n⚪ ⚪ ⚪ ⚪ ⚪\n⚪ ⚪ ⚪ ⚪ ⚪\n⚪ ⚪ ⚪ ⚪ ⚪\n⚪ ⚪ ⚪ ⚪ ⚪\n⚪ ⚪ ⚪ ⚪ ⚪\n"),
+	ss("Ⓑ  Ⓘ  Ⓝ  Ⓖ  Ⓞ  \n⚪ 🔴 ⚪ ⚪ ⚪\n⚪ 🔴 ⚪ ⚪ ⚪\n⚪ 🔴 ⚪ ⚪ ⚪\n⚪ 🔴 ⚪ ⚪ ⚪\n⚪ 🔴 ⚪ ⚪ ⚪\n"),
+	ss("Ⓑ  Ⓘ  Ⓝ  Ⓖ  Ⓞ  \n⚪ ⚪ ⚪ ⚪ ⚪\n⚪ ⚪ ⚪ ⚪ ⚪\n⚪ ⚪ ⚪ ⚪ ⚪\n🔴 🔴 🔴 🔴 🔴\n⚪ ⚪ ⚪ ⚪ ⚪\n"),
+	ss("Ⓑ  Ⓘ  Ⓝ  Ⓖ  Ⓞ  \n🔴 ⚪ ⚪ ⚪ ⚪\n⚪ 🔴 ⚪ ⚪ ⚪\n⚪ ⚪ 🔴 ⚪ ⚪\n⚪ ⚪ ⚪ 🔴 ⚪\n⚪ ⚪ ⚪ ⚪ 🔴\n"),
 	ss("s/🔢/🔤/g"),
+	ss("s/🔢/Tailscale lingo/g"),
+	ss("lingo: noun\nthe vocabulary or jargon\n of a particular\nsubject or group of people"),
+	ss("i.e."),
+	ss("I say $GIBBERISH,\n"),
+	ss("I say $G\u0332IBBERISH,\nyou get G\u0332"),
 	ss("got it?"),
 	ss("play.bingo.ts.net"),
-	ss("play.bingo.ts.net\n\n(laptop, phone)"),
-	ss("play.bingo.ts.net\n\n(over Tailscale Funnel ✨)"),
-	ss("play.bingo.ts.net\n\n(bonus: use Tailscale)"),
-	ss("play.bingo.ts.net\n\n⏳ 0:nn"),
+	ss("⚡️ 😬⚡️"),
+	ss("play.bingo.ts.net\n\n⏳ -:--\n ", slideID("timer")),
+	ss("play.bingo.ts.net\n\n⏳ -:--\n✨ Tailscale Funnel ✨"),
+	ss("play.bingo.ts.net\n\n⏳ -:--\n🍄 (accept the share) 🍄"),
+	ss("play.bingo.ts.net\n\n⏳ -:--\nintro? right."),
+	ss("play.bingo.ts.net\n\n⏳ -:--\nGopher"),
+	ss("play.bingo.ts.net\n\n⏳ -:--\nI write code at Tailscale"),
+	ss("play.bingo.ts.net\n\n⏳ -:--\nfew years now"),
+	ss("play.bingo.ts.net\n\n⏳ -:--\n(I know where the bodies are)"),
+	ss("play.bingo.ts.net\n\n⏳ -:--\nI used to ❤️ travel + speak"),
+	ss("play.bingo.ts.net\n\n⏳ -:--\nthen pandemic + kids 😅"),
+	ss("play.bingo.ts.net\n\n⏳ -:--\n🌲🏡🏔️"),
+	ss("play.bingo.ts.net\n\n⏳ -:--\n"),
+	ss("Game on! 🏒"),
+	ss(""),
 }
 
 func main() {
@@ -143,20 +172,40 @@ func (bs *bingoServer) writeString(x, y int, s string, optStyle ...tcell.Style) 
 		style = optStyle[0]
 	}
 
+	var lastX int
+	var lastR rune
 	for _, r := range s {
+		wid := runewidth.RuneWidth(r)
+		if wid == 0 {
+			if r == '\u0332' {
+				bs.sc.SetContent(lastX, y, lastR, nil, style.Foreground(tcell.ColorRed))
+			}
+			continue
+		}
 		bs.sc.SetContent(x, y, r, nil, style)
-		x += runewidth.RuneWidth(r)
+		lastX = x
+		lastR = r
+		x += wid
 	}
 }
 
 func (bs *bingoServer) render() {
-	bs.paintWithMsg(slides[bs.slide].msg)
+	curSlide := slides[bs.slide]
+	msg := curSlide.msg
+
+	if strings.Contains(msg, "⏳") {
+		if bs.clock != nil {
+			msg = strings.ReplaceAll(msg, "-:--", fmt.Sprintf("%1d:%02d", bs.secRemain/60, bs.secRemain%60))
+		}
+	}
+
+	bs.paintWithMsg(msg)
 	width, height := bs.sc.Size()
 	if bs.slide > 3 {
 		bs.writeString(0, height-1, "🔤")
 	}
 	if bs.slide > 0 {
-		bs.writeString(width-4, height-1, fmt.Sprintf("🛝%d", bs.slide+1), tcell.StyleDefault.Foreground(tcell.ColorDarkGray))
+		bs.writeString(width-5, height-1, fmt.Sprintf("🛝%d", bs.slide+1), tcell.StyleDefault.Foreground(tcell.ColorDarkGray))
 	}
 	bs.sc.Sync()
 }
@@ -168,7 +217,7 @@ func (bs *bingoServer) paintWithMsg(msg string) {
 	width, height := sc.Size()
 
 	lines := strings.Split(msg, "\n")
-	midy := height/2 - 1 - len(lines)/2
+	midy := int(float64(height)/2.0 - float64(len(lines))/2 + 0.5)
 	if midy < 0 {
 		midy = 0
 	}
@@ -192,7 +241,7 @@ func (bs *bingoServer) present() error {
 		return err
 	}
 
-	bs.advanceSlide(0)
+	bs.render()
 
 	evc := make(chan tcell.Event, 8)
 	quitc := make(chan struct{})
@@ -206,6 +255,11 @@ func (bs *bingoServer) present() error {
 				case string:
 					bs.paintWithMsg(fmt.Sprintf("Player: %q", ev))
 					bs.sc.Sync()
+				case func():
+					ev()
+					continue
+				default:
+					panic(fmt.Sprintf("unknown game event: %T", ev))
 				}
 			case ev := <-evc:
 				switch ev := ev.(type) {
@@ -227,6 +281,9 @@ func (bs *bingoServer) present() error {
 							continue
 						case '0':
 							bs.setSlide(0)
+							continue
+						case 'c':
+							bs.startClock()
 							continue
 						}
 						bs.paintWithMsg(fmt.Sprintf("Rune: %q", r))
@@ -259,6 +316,31 @@ type bingoServer struct {
 
 	sc    tcell.Screen
 	slide int
+
+	secRemain int
+	clock     *time.Timer
+}
+
+func (s *bingoServer) startClock() {
+	s.secRemain = 30
+	if s.clock != nil {
+		s.clock.Stop()
+	}
+
+	s.clock = time.AfterFunc(time.Second, func() {
+		s.gameEv <- s.tickClock
+	})
+	s.render()
+}
+
+func (s *bingoServer) tickClock() {
+	s.secRemain--
+	s.render()
+	if s.secRemain > 0 {
+		s.clock = time.AfterFunc(time.Second, func() {
+			s.gameEv <- s.tickClock
+		})
+	}
 }
 
 var crc64Table = crc64.MakeTable(crc64.ISO)
