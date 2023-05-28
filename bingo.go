@@ -139,12 +139,17 @@ func main() {
 		log.Fatal(bs.present())
 	}
 	s := &tsnet.Server{
-		Logf: logger.Discard,
+		Dir:      "/Users/bradfitz/Library/Application Support/tsnet-lingobingo",
+		Hostname: "bingo",
+		Logf:     logger.Discard,
 	}
 	if *verbose {
 		s.Logf = log.Printf
 	}
 	defer s.Close()
+
+	log.SetFlags(0)
+	log.Printf("80...")
 
 	ln80, err := s.Listen("tcp", ":80")
 	if err != nil {
@@ -152,10 +157,13 @@ func main() {
 	}
 	defer ln80.Close()
 
+	log.Printf("LC...")
 	bs.lc, err = s.LocalClient()
 	if err != nil {
 		log.Fatal(err)
 	}
+
+	log.Printf("Watch...")
 	watcher, err := bs.lc.WatchIPNBus(context.Background(), ipn.NotifyWatchEngineUpdates|ipn.NotifyInitialNetMap)
 	if err != nil {
 		log.Fatal(err)
@@ -171,11 +179,15 @@ func main() {
 		}
 	}()
 
+	log.Printf("443...")
 	lnFunnel, err := s.ListenFunnel("tcp", ":443")
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer lnFunnel.Close()
+
+	log.Printf("Showtime.")
+	time.Sleep(500 * time.Millisecond)
 
 	errc := make(chan error, 1)
 	go func() { errc <- http.Serve(lnFunnel, bs) }()
