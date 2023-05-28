@@ -61,7 +61,7 @@ func ss(msg string, arg ...any) slide {
 }
 
 var slides = []slide{
-	ss("A lightning talk\n⚡️\nBrad Fitzpatrick\n"),
+	ss("A lightning talk\n⚡️\nBrad Fitzpatrick"),
 	ss("oh hi\nintros later"),
 	ss("talks talks talks"),
 	ss("talks are fun"),
@@ -98,7 +98,7 @@ var slides = []slide{
 	ss("play.bingo.ts.net\n\n⏳ -:--\n🌲🏡🏔️"),
 	ss("play.bingo.ts.net\n\n⏳ -:--\n"),
 	ss("Game on! 🏒"),
-	ss(""),
+	ss("tailscaled"),
 }
 
 func main() {
@@ -148,6 +148,7 @@ func main() {
 }
 
 func (bs *bingoServer) advanceSlide(delta int) {
+	bs.quitKey = nil
 	next := bs.slide + delta
 	if next < 0 {
 		next = 0
@@ -175,7 +176,7 @@ func (bs *bingoServer) writeString(x, y int, s string, optStyle ...tcell.Style) 
 	var lastX int
 	var lastR rune
 	for _, r := range s {
-		wid := runewidth.RuneWidth(r)
+		wid := runeWidth(r)
 		if wid == 0 {
 			if r == '\u0332' {
 				bs.sc.SetContent(lastX, y, lastR, nil, style.Foreground(tcell.ColorRed))
@@ -187,6 +188,21 @@ func (bs *bingoServer) writeString(x, y int, s string, optStyle ...tcell.Style) 
 		lastR = r
 		x += wid
 	}
+}
+
+func runeWidth(r rune) int {
+	switch r {
+	case '🛝':
+		return 2
+	}
+	return runewidth.RuneWidth(r)
+}
+
+func stringCells(s string) (n int) {
+	for _, r := range s {
+		n += runeWidth(r)
+	}
+	return n
 }
 
 func (bs *bingoServer) render() {
@@ -204,8 +220,11 @@ func (bs *bingoServer) render() {
 	if bs.slide > 3 {
 		bs.writeString(0, height-1, "🔤")
 	}
+	if bs.showSize {
+		bs.writeString(10, 0, fmt.Sprintf("%dx%d", width, height), tcell.StyleDefault.Foreground(tcell.ColorDarkGray))
+	}
 	if bs.slide > 0 {
-		bs.writeString(width-5, height-1, fmt.Sprintf("🛝%d", bs.slide+1), tcell.StyleDefault.Foreground(tcell.ColorDarkGray))
+		bs.writeString(width-4, height-1, fmt.Sprintf("🛝%d", bs.slide+1), tcell.StyleDefault)
 	}
 	bs.sc.Sync()
 }
@@ -217,13 +236,13 @@ func (bs *bingoServer) paintWithMsg(msg string) {
 	width, height := sc.Size()
 
 	lines := strings.Split(msg, "\n")
-	midy := int(float64(height)/2.0 - float64(len(lines))/2 + 0.5)
-	if midy < 0 {
-		midy = 0
+	midy := int(float64(height)/2.0 - float64(len(lines))/2 - 0.5)
+	if midy < 1 {
+		midy = 1
 	}
 	for y, lineMsg := range lines {
 		midx := width / 2
-		start := midx - runewidth.StringWidth(lineMsg)/2
+		start := midx - stringCells(lineMsg)/2
 		if start < 0 {
 			start = 0
 		}
@@ -284,14 +303,26 @@ func (bs *bingoServer) present() error {
 							continue
 						case 'c':
 							bs.startClock()
+						case 's':
+							bs.showSize = !bs.showSize
+							bs.render()
+						case 'q':
+							was := bs.quitKey
+							bs.quitKey = bs.quitKey[:0]
+							for _, t := range was {
+								if time.Since(t) < 5*time.Second {
+									bs.quitKey = append(bs.quitKey, t)
+								}
+							}
+							bs.quitKey = append(bs.quitKey, time.Now())
+							if len(bs.quitKey) == 5 {
+								bs.sc.Fini()
+								os.Exit(0)
+							}
 							continue
 						}
 						bs.paintWithMsg(fmt.Sprintf("Rune: %q", r))
 						bs.sc.Sync()
-						if r == 'q' {
-							bs.sc.Fini()
-							os.Exit(0)
-						}
 					default:
 						bs.paintWithMsg(fmt.Sprintf("Key: %d", k))
 						bs.sc.Sync()
@@ -317,7 +348,9 @@ type bingoServer struct {
 	sc    tcell.Screen
 	slide int
 
+	quitKey   []time.Time
 	secRemain int
+	showSize  bool
 	clock     *time.Timer
 }
 
