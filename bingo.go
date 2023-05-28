@@ -12,6 +12,7 @@ and then you need a tiny bit of JS to add/remove classes
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"hash/crc64"
@@ -30,6 +31,7 @@ import (
 	"github.com/gdamore/tcell/v2"
 	"github.com/mattn/go-runewidth"
 	"tailscale.com/client/tailscale"
+	"tailscale.com/ipn"
 	"tailscale.com/tsnet"
 	"tailscale.com/types/logger"
 )
@@ -154,6 +156,20 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	watcher, err := bs.lc.WatchIPNBus(context.Background(), ipn.NotifyWatchEngineUpdates|ipn.NotifyInitialNetMap)
+	if err != nil {
+		log.Fatal(err)
+	}
+	go func() {
+		for {
+			not, err := watcher.Next()
+			if err != nil {
+				log.Printf("watcher: %v\n", err)
+				return
+			}
+			bs.gameEv <- not
+		}
+	}()
 
 	lnFunnel, err := s.ListenFunnel("tcp", ":443")
 	if err != nil {
@@ -251,7 +267,17 @@ func (bs *bingoServer) render() {
 		bs.writeString(0, height-1, "┗", tcell.StyleDefault)
 		bs.writeString(width-1, height-1, "┛", tcell.StyleDefault)
 		bs.writeString(1, 1, fmt.Sprintf("%dx%d", width, height), tcell.StyleDefault.Foreground(tcell.ColorDarkGray))
+
+		stateIcon := "🔴"
+		switch bs.state {
+		case ipn.Running:
+			stateIcon = "🟢"
+		case ipn.Starting:
+			stateIcon = "🟡"
+		}
+		bs.writeString(width-2, 1, stateIcon, tcell.StyleDefault)
 	}
+
 	bs.sc.Sync()
 }
 
@@ -303,6 +329,8 @@ func (bs *bingoServer) present() error {
 				case func():
 					ev()
 					continue
+				case ipn.Notify:
+					bs.handleNotify(ev)
 				default:
 					panic(fmt.Sprintf("unknown game event: %T", ev))
 				}
@@ -329,6 +357,7 @@ func (bs *bingoServer) present() error {
 							continue
 						case 'c':
 							bs.startClock()
+							continue
 						case 's':
 							bs.showSize = !bs.showSize
 							bs.render()
@@ -375,6 +404,8 @@ type bingoServer struct {
 	sc    tcell.Screen
 	slide int
 
+	state      ipn.State
+	numPeers   int
 	quitKey    []time.Time
 	secRemain  int
 	showSize   bool
@@ -402,6 +433,13 @@ func (s *bingoServer) tickClock() {
 			s.gameEv <- s.tickClock
 		})
 	}
+}
+
+func (s *bingoServer) handleNotify(n ipn.Notify) {
+	if n.State != nil {
+		s.state = *n.State
+	}
+
 }
 
 var crc64Table = crc64.MakeTable(crc64.ISO)
