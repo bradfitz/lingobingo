@@ -664,3 +664,116 @@ func firstLabel(s string) string {
 	s, _, _ = strings.Cut(s, ".")
 	return s
 }
+
+type boardCell byte
+
+const (
+	cellBingo    boardCell = 'B' // "Bingo!" (final win)
+	cellWin      boardCell = 'w' // win path
+	cellProgress boardCell = '.'
+	cellKill     boardCell = 'X'
+)
+
+type board [5][5]boardCell // [y][x]
+
+type pos struct{ x, y int }
+
+var center = pos{2, 2}
+
+var bingoPos = []pos{
+	{1, 0},
+	{3, 0},
+	{0, 1},
+	{4, 1},
+	{0, 3},
+	{4, 3},
+	{1, 4},
+	{3, 4},
+}
+
+var ex1 = []pos{
+	{0, 0},
+	{1, 1},
+	{3, 3},
+	{4, 4},
+}
+
+var ex2 = []pos{
+	{4, 0},
+	{3, 1},
+	{1, 3},
+	{0, 4},
+}
+
+func NewBoard(s string) board {
+	rnd := rand.New(rand.NewSource(int64(crc64.Checksum([]byte(s), crc64Table))))
+	var b board
+
+	// Pick final Bingo win position.
+	bp := bingoPos[rnd.Intn(len(bingoPos))]
+	// Mark column & row as not blocked, so they can win.
+	for x := 0; x < 5; x++ {
+		b[bp.y][x] = cellWin
+	}
+	for y := 0; y < 5; y++ {
+		b[y][bp.x] = cellWin
+	}
+	b[bp.y][bp.x] = cellBingo
+
+	// Eliminate a cell on both diagonals.
+	var xkill [5]bool
+	var ykill [5]bool
+	for {
+		p := ex1[rnd.Intn(len(ex1))]
+		if b[p.y][p.x] != 0 {
+			continue
+		}
+		b[p.y][p.x] = cellKill
+		ykill[p.y] = true
+		xkill[p.x] = true
+		break
+	}
+	for {
+		p := ex2[rnd.Intn(len(ex2))]
+		if b[p.y][p.x] != 0 || xkill[p.x] || ykill[p.y] {
+			continue
+		}
+		b[p.y][p.x] = cellKill
+		ykill[p.y] = true
+		xkill[p.x] = true
+		break
+	}
+	// Now pick two more.
+	for {
+		p1 := pos{rnd.Intn(5), rnd.Intn(5)}
+		p2 := pos{rnd.Intn(5), rnd.Intn(5)}
+		if p1 == center || p2 == center ||
+			p1.x == p2.x ||
+			p1.y == p2.y ||
+			b[p1.y][p1.x] != 0 ||
+			b[p2.y][p2.x] != 0 ||
+			xkill[p1.x] || ykill[p1.y] ||
+			xkill[p2.x] || ykill[p2.y] {
+			continue
+		}
+		b[p1.y][p1.x] = cellKill
+		b[p2.y][p2.x] = cellKill
+		break
+	}
+	return b
+}
+
+func (b board) String() string {
+	var buf strings.Builder
+	for _, row := range b {
+		for _, cell := range row {
+			b := byte(cell)
+			if b == 0 {
+				b = '.'
+			}
+			buf.WriteByte(b)
+		}
+		buf.WriteByte('\n')
+	}
+	return buf.String()
+}
