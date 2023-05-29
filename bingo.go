@@ -12,12 +12,13 @@ and then you need a tiny bit of JS to add/remove classes
 package main
 
 import (
+	"bytes"
 	"context"
+	crand "crypto/rand"
 	"flag"
 	"fmt"
 	"hash/crc64"
 	"html"
-	"io"
 	"log"
 	"math/rand"
 	"net"
@@ -37,15 +38,17 @@ import (
 )
 
 var (
-	verbose     = flag.Bool("verbose", false, "verbose")
-	presentOnly = flag.Bool("present", false, "present only")
-	startSlide  = flag.Int("slide", 0, "slide to start on (1-based)")
+	verbose      = flag.Bool("verbose", false, "verbose")
+	doPresent    = flag.Bool("present", true, "present")
+	useTailscale = flag.Bool("tailscale", true, "use tailscale")
+	startSlide   = flag.Int("slide", 0, "slide to start on (1-based)")
 )
 
 type slide struct {
-	idx int // 0-based
-	msg string
-	id  slideID // set for certain key slides
+	idx    int // 0-based
+	msg    string
+	id     slideID // set for certain key slides
+	letter letter  // non-zero for slides adding a letter
 }
 
 func (s *slide) OnOrAfter(id slideID) bool {
@@ -58,14 +61,23 @@ func (s *slide) OnOrAfter(id slideID) bool {
 
 type slideID string
 
+type letter byte
+type L = letter
+
 var slideGameOn = slideID("game-on")
 
+// ss constructs a slide.
 func ss(msg string, arg ...any) *slide {
 	s := &slide{msg: msg}
 	for _, a := range arg {
 		switch v := a.(type) {
 		case slideID:
 			s.id = v
+		case letter:
+			s.letter = v
+			if !strings.Contains(s.msg, "\u0332") {
+				s.msg = strings.Replace(s.msg, string(s.letter), string(s.letter)+"\u0332", 1)
+			}
 		default:
 			panic(fmt.Sprintf("unknown type %T", a))
 		}
@@ -97,7 +109,7 @@ var slides = []*slide{
 	ss("I say $G\u0332IBBERISH,\nyou get G\u0332"),
 	ss("got it?"),
 	ss("play.bingo.ts.net"),
-	ss("⚡️ 😬⚡️"),
+	ss("play.bingo.ts.net\n\n⚡️ 😬⚡️\n"),
 	ss("play.bingo.ts.net\n\n⏳ -:--\n ", slideID("timer")),
 	ss("play.bingo.ts.net\n\n⏳ -:--\n✨ Tailscale Funnel ✨"),
 	ss("play.bingo.ts.net\n\n⏳ -:--\n🍄 (accept the share) 🍄"),
@@ -112,7 +124,112 @@ var slides = []*slide{
 	ss("play.bingo.ts.net\n\n⏳ -:--\n"),
 	ss("Game on! 🏒", slideGameOn),
 	ss("tailscaled"),
+	ss("tailscaled\n\n* slaps hood *"),
+	ss("tailscaled\n\n\"we can get so many protocols\nin this daemon...\""),
+	ss("Wireguard", L('W')),
+	ss("IP\n(the data plane)", L('I')),
+	ss("HTTP client\n(the control plane)", L('H')),
+	ss("HTTP server\n(PeerAPI, LocalAPI, ...)", L('H')),
+	ss("HTTP server\n(Tailscale Funnel)", L('F')),
+	ss("HTTP/1", L('1')),
+	ss("HTTP/2", L('2')),
+	ss("TLS", L('T')),
+	ss("Noise", L('N')),
+	ss("MagicDNS"),
+	ss("DNS", L('D')),
+	ss("DoH\n", L('D')),
+	ss("DoH\n1.1.1.1", L('1')),
+	ss("DoH\n8.8.8.8", L('8')),
+	ss("DoH\n9.9.9.9", L('9')),
+	ss("NAT Traversal"),
+	ss("UDP", L('U')),
+	ss("DERP", L('D')),
+	ss("Disco", L('D')),
+	ss("NAT-PMP", L('N')),
+	ss("PCP", L('P')),
+	ss("UPnP\n", L('U')),
+	ss("UPnP\n(XML)", L('X')),
+	ss("L3", L('3')),
+	ss("TUN", L('T')),
+	ss("L2", L('2')),
+	ss("TAP", L('T')),
+	ss("ARP", L('A')),
+	ss("DHCP", L('D')),
+	ss("No TUN/TAP?"),
+	ss("Userspace mode"),
+	ss("Two outbound\nproxy options..."),
+	ss("HTTP CONNECT", L('C')),
+	ss("SOCKS5", L('5')),
+	ss("Tailscale SSH", L('S')),
+	ss("SFTP", L('S')),
+	ss("WASM", L('W')),
+	ss("WebSockets", L('W')),
+
+	ss("ACME", L('A')),
+	ss("BGP", L('B')),
+	ss("Bird", L('B')),
 }
+
+/*
+ACME (LetsEncrypt certs)
+ARP (TAP)
+BGP/BIRD
+CGNAT
+CONNECT (outbound HTTP proxy)
+DERP
+DHCP (TAP)
+DNS (client, server)
+Ethernet (TAP)
+Funnel (TLS SNI)
+GRE
+GCP
+Happy Eyeballs
+HTTP
+HTTPS
+HTTP/2
+ICMP
+IPv4, IPv6 (gvisor)
+JSON
+Jitter (on most protocols)
+KeepAlive (TCP, DERP, …)
+Key exchange
+Logz
+L4
+LAN
+Linux
+Machine API
+MTU
+NaCl crypto_secretbox
+NAT
+NAT-PMP
+Noise
+Netlink
+OAuth (tailscale up authkey)
+PeerAPI
+PCAP
+PCP
+Prometheus (metrics exporter)
+QUIC (but maybe not yet)
+RDP
+Router Advertisements (IPv6)
+TCP (gvisor, filter)
+TSMP
+SFTP
+SOCKS5
+SSH
+SQLite
+UDP (gvisor, filter)
+UPnP
+Virtio (UDP Offloading in WireGuard-go)
+WebSockets (DERP)
+WireGuard
+XDG Base Directory Specification
+YAML
+Zeroconf (primarily ignoring it for now in MagicDNS server, want to forward it later)
+
+Hold:
+Z, Q, V (Virtio), J (JSON),
+*/
 
 var slideByID = map[slideID]*slide{}
 
@@ -129,13 +246,14 @@ func main() {
 	flag.Parse()
 
 	bs := &bingoServer{
-		gameEv: make(chan any, 8),
+		gameEv:     make(chan any, 8),
+		letterSeen: make(map[letter]bool),
 	}
 	if *startSlide > 0 {
 		bs.slide = *startSlide - 1
 	}
 
-	if *presentOnly {
+	if !*useTailscale {
 		log.Fatal(bs.present())
 	}
 	s := &tsnet.Server{
@@ -149,22 +267,30 @@ func main() {
 	defer s.Close()
 
 	log.SetFlags(0)
-	log.Printf("80...")
 
+	log.Printf("LC...")
+	var err error
+	bs.lc, err = s.LocalClient()
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	log.Printf("80...")
 	ln80, err := s.Listen("tcp", ":80")
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer ln80.Close()
 
-	log.Printf("LC...")
-	bs.lc, err = s.LocalClient()
+	log.Printf("443...")
+	lnFunnel, err := s.ListenFunnel("tcp", ":443")
 	if err != nil {
 		log.Fatal(err)
 	}
+	defer lnFunnel.Close()
 
 	log.Printf("Watch...")
-	watcher, err := bs.lc.WatchIPNBus(context.Background(), ipn.NotifyWatchEngineUpdates|ipn.NotifyInitialNetMap)
+	watcher, err := bs.lc.WatchIPNBus(context.Background(), ipn.NotifyWatchEngineUpdates|ipn.NotifyInitialNetMap|ipn.NotifyInitialState)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -179,20 +305,15 @@ func main() {
 		}
 	}()
 
-	log.Printf("443...")
-	lnFunnel, err := s.ListenFunnel("tcp", ":443")
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer lnFunnel.Close()
-
 	log.Printf("Showtime.")
 	time.Sleep(500 * time.Millisecond)
 
 	errc := make(chan error, 1)
 	go func() { errc <- http.Serve(lnFunnel, bs) }()
 	go func() { errc <- http.Serve(ln80, bs) }()
-	go func() { errc <- bs.present() }()
+	if *doPresent {
+		go func() { errc <- bs.present() }()
+	}
 
 	log.Fatal(<-errc)
 }
@@ -268,7 +389,10 @@ func (bs *bingoServer) render() {
 	bs.paintWithMsg(msg)
 	width, height := bs.sc.Size()
 	if curSlide.OnOrAfter(slideGameOn) {
-		bs.writeString(width/2-1, height-1, fmt.Sprintf("🔤%d", bs.numLetters), tcell.StyleDefault)
+		if letter := curSlide.letter; letter != 0 {
+			bs.letterSeen[letter] = true
+		}
+		bs.writeString(width/2-1, height-1, fmt.Sprintf("🔤%d", len(bs.letterSeen)), tcell.StyleDefault)
 	}
 	if bs.slide > 0 {
 		bs.writeString(width-4, height-1, fmt.Sprintf("🛝%d", bs.slide+1), tcell.StyleDefault)
@@ -280,14 +404,15 @@ func (bs *bingoServer) render() {
 		bs.writeString(width-1, height-1, "┛", tcell.StyleDefault)
 		bs.writeString(1, 1, fmt.Sprintf("%dx%d", width, height), tcell.StyleDefault.Foreground(tcell.ColorDarkGray))
 
-		stateIcon := "🔴"
+		stateIcon := fmt.Sprintf("%d %s 🔴", bs.notifies, bs.state)
 		switch bs.state {
 		case ipn.Running:
 			stateIcon = "🟢"
 		case ipn.Starting:
 			stateIcon = "🟡"
 		}
-		bs.writeString(width-2, 1, stateIcon, tcell.StyleDefault)
+
+		bs.writeString(width-1-stringCells(stateIcon), 1, stateIcon, tcell.StyleDefault)
 	}
 
 	bs.sc.Sync()
@@ -328,101 +453,103 @@ func (bs *bingoServer) present() error {
 
 	evc := make(chan tcell.Event, 8)
 	quitc := make(chan struct{})
-	go func() {
-		bs.sc.Clear()
-
-		for {
-			select {
-			case ev := <-bs.gameEv:
-				switch ev := ev.(type) {
-				case string:
-					bs.paintWithMsg(fmt.Sprintf("Player: %q", ev))
-					bs.sc.Sync()
-				case func():
-					ev()
-					continue
-				case ipn.Notify:
-					bs.handleNotify(ev)
-				default:
-					panic(fmt.Sprintf("unknown game event: %T", ev))
-				}
-			case ev := <-evc:
-				switch ev := ev.(type) {
-				case *tcell.EventKey:
-					k := ev.Key()
-					switch k {
-					case tcell.KeyDown, tcell.KeyRight:
-						bs.advanceSlide(+1)
-					case tcell.KeyUp, tcell.KeyLeft:
-						bs.advanceSlide(-1)
-					case tcell.KeyRune:
-						r := ev.Rune()
-						switch r {
-						case '.':
-							bs.advanceSlide(0)
-							continue
-						case ' ':
-							bs.advanceSlide(1)
-							continue
-						case '0':
-							bs.setSlide(0)
-							continue
-						case 'c':
-							bs.startClock()
-							continue
-						case 's':
-							bs.showSize = !bs.showSize
-							bs.render()
-							continue
-						case 'q':
-							was := bs.quitKey
-							bs.quitKey = bs.quitKey[:0]
-							for _, t := range was {
-								if time.Since(t) < 5*time.Second {
-									bs.quitKey = append(bs.quitKey, t)
-								}
-							}
-							bs.quitKey = append(bs.quitKey, time.Now())
-							if len(bs.quitKey) == 5 {
-								bs.sc.Fini()
-								os.Exit(0)
-							}
-							continue
-						}
-						bs.paintWithMsg(fmt.Sprintf("Rune: %q", r))
-						bs.sc.Sync()
-					default:
-						bs.paintWithMsg(fmt.Sprintf("Key: %d", k))
-						bs.sc.Sync()
-					}
-				case *tcell.EventResize:
-					bs.render()
-				default:
-					bs.paintWithMsg(fmt.Sprintf("ev: %T: %v", ev, ev))
-					bs.sc.Sync()
-				}
-			}
-		}
-	}()
+	go bs.loop(evc)
 	bs.sc.ChannelEvents(evc, quitc)
-
 	select {}
 }
 
+func (bs *bingoServer) loop(evc <-chan tcell.Event) {
+	bs.sc.Clear()
+
+	for {
+		select {
+		case ev := <-bs.gameEv:
+			switch ev := ev.(type) {
+			case string:
+				bs.paintWithMsg(fmt.Sprintf("Player: %q", ev))
+				bs.sc.Sync()
+			case func():
+				ev()
+				continue
+			case ipn.Notify:
+				bs.handleNotify(ev)
+			default:
+				panic(fmt.Sprintf("unknown game event: %T", ev))
+			}
+		case ev := <-evc:
+			switch ev := ev.(type) {
+			case *tcell.EventKey:
+				k := ev.Key()
+				switch k {
+				case tcell.KeyDown, tcell.KeyRight:
+					bs.advanceSlide(+1)
+				case tcell.KeyUp, tcell.KeyLeft:
+					bs.advanceSlide(-1)
+				case tcell.KeyRune:
+					r := ev.Rune()
+					switch r {
+					case '.':
+						bs.advanceSlide(0)
+						continue
+					case ' ':
+						bs.advanceSlide(1)
+						continue
+					case '0':
+						bs.setSlide(0)
+						continue
+					case 'c':
+						bs.startClock()
+						continue
+					case 's':
+						bs.showSize = !bs.showSize
+						bs.render()
+						continue
+					case 'q':
+						was := bs.quitKey
+						bs.quitKey = bs.quitKey[:0]
+						for _, t := range was {
+							if time.Since(t) < 5*time.Second {
+								bs.quitKey = append(bs.quitKey, t)
+							}
+						}
+						bs.quitKey = append(bs.quitKey, time.Now())
+						if len(bs.quitKey) == 5 {
+							bs.sc.Fini()
+							os.Exit(0)
+						}
+						continue
+					}
+					bs.paintWithMsg(fmt.Sprintf("Rune: %q", r))
+					bs.sc.Sync()
+				default:
+					bs.paintWithMsg(fmt.Sprintf("Key: %d", k))
+					bs.sc.Sync()
+				}
+			case *tcell.EventResize:
+				bs.render()
+			default:
+				bs.paintWithMsg(fmt.Sprintf("ev: %T: %v", ev, ev))
+				bs.sc.Sync()
+			}
+		}
+	}
+}
+
 type bingoServer struct {
-	lc     *tailscale.LocalClient
-	gameEv chan any
+	lc         *tailscale.LocalClient
+	gameEv     chan any
+	letterSeen map[letter]bool
 
 	sc    tcell.Screen
 	slide int
 
-	state      ipn.State
-	numPeers   int
-	quitKey    []time.Time
-	secRemain  int
-	showSize   bool
-	numLetters int
-	clock      *time.Timer
+	state     ipn.State
+	numPeers  int
+	notifies  int
+	quitKey   []time.Time
+	secRemain int
+	showSize  bool
+	clock     *time.Timer
 }
 
 func (s *bingoServer) startClock() {
@@ -448,15 +575,29 @@ func (s *bingoServer) tickClock() {
 }
 
 func (s *bingoServer) handleNotify(n ipn.Notify) {
+	s.notifies++
 	if n.State != nil {
 		s.state = *n.State
 	}
-
+	if n.NetMap != nil {
+		// TODO
+	}
 }
 
 var crc64Table = crc64.MakeTable(crc64.ISO)
 
 func (s *bingoServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	c, _ := r.Cookie("game")
+	if c == nil {
+		buf := make([]byte, 8)
+		crand.Read(buf)
+		c = &http.Cookie{
+			Name:  "game",
+			Value: fmt.Sprintf("%x", buf),
+		}
+		http.SetCookie(w, c)
+	}
+
 	who, _ := s.lc.WhoIs(r.Context(), r.RemoteAddr)
 	var gameBoard string
 	if who != nil {
@@ -482,8 +623,9 @@ func (s *bingoServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	rnd.Shuffle(len(letters), reflect.Swapper(letters))
 
 	hdr, _ := os.ReadFile("bingo.html")
+	js, _ := os.ReadFile("bingo.js")
 	num := 0
-	out := rxCell.ReplaceAllStringFunc(string(hdr), func(s string) string {
+	out := rxCell.ReplaceAllFunc(hdr, func(_ []byte) []byte {
 		row, col := num/5, num%5
 		letter := letters[num]
 		num++
@@ -500,10 +642,12 @@ func (s *bingoServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if marked {
 			class += " marked"
 		}
-		return fmt.Sprintf("<td class='%s'>%s</td>", class, cellText)
+		return fmt.Appendf(nil, "<td class='%s'>%s</td>", class, cellText)
 	})
+	out = bytes.Replace(out, []byte("<script></script>"),
+		fmt.Appendf(nil, "<script>\n%s\n</script>", js), 1)
 
-	io.WriteString(w, out)
+	w.Write(out)
 
 	fmt.Fprintf(w, "<p>You are <b>%s</b> from <b>%s</b> (%s)</p>",
 		html.EscapeString(who.UserProfile.LoginName),
