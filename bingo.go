@@ -130,23 +130,30 @@ var slides = []*slide{
 	ss("tailscaled\n\n\"we can get so many protocols\nin this daemon...\""),
 	ss("Wireguard", L('W')),
 	ss("IP\n(the data plane)", L('I')),
+	ss("IPv4", L('4')),
+	ss("IPv6", L('6')),
 	ss("HTTP client\n(the control plane)", L('H')),
 	ss("HTTP server\n(PeerAPI, LocalAPI, ...)", L('H')),
 	ss("HTTP server\n(Tailscale Funnel)", L('F')),
+	ss("ACME", L('A')),
 	ss("HTTP/1", L('1')),
 	ss("HTTP/2", L('2')),
 	ss("TLS", L('T')),
 	ss("Noise", L('N')),
 	ss("MagicDNS"),
-	ss("DNS", L('D')),
+	ss("DNS\n", L('D')),
+	ss("DNS\nServer + Client", L('D')),
 	ss("DoH\n", L('D')),
 	ss("DoH\n1.1.1.1", L('1')),
 	ss("DoH\n8.8.8.8", L('8')),
-	ss("DoH\n9.9.9.9", L('9')),
 	ss("NAT Traversal"),
 	ss("UDP", L('U')),
 	ss("DERP", L('D')),
 	ss("Disco", L('D')),
+	ss("Disco pings", L('D')),
+	ss("ICMP", L('I')),
+	ss("TSMP\n", L('T')),
+	ss("TSMP\nIANA proto 99", L('9')),
 	ss("NAT-PMP", L('N')),
 	ss("PCP", L('P')),
 	ss("UPnP\n", L('U')),
@@ -154,21 +161,41 @@ var slides = []*slide{
 	ss("L3", L('3')),
 	ss("TUN", L('T')),
 	ss("L2", L('2')),
+	ss("Ethernet", L('E')),
+	ss("MAC", L('M')),
 	ss("TAP", L('T')),
 	ss("ARP", L('A')),
 	ss("DHCP", L('D')),
 	ss("No TUN/TAP?"),
 	ss("Userspace mode"),
+	ss("gVisor", L('V')),
+	ss("netstack", L('N')),
 	ss("Two outbound\nproxy options..."),
 	ss("HTTP CONNECT", L('C')),
 	ss("SOCKS5", L('5')),
 	ss("Tailscale SSH", L('S')),
+	ss("scp"),
 	ss("SFTP", L('S')),
+
+	ss("Platforms"),
+	ss("Linux", L('L')),
+	ss("macOS", L('M')),
+	ss("Windows", L('W')),
+	ss("iOS", L('I')),
+	ss("Android", L('A')),
+	ss("FreeBSD", L('F')),
+	ss("OpenBSD", L('F')),
 	ss("WASM", L('W')),
 	ss("WebSockets", L('W')),
 
-	ss("ACME", L('A')),
+	ss("Clouds"),
+	ss("AWS", L('A')),
+	ss("Azure", L('A')),
+	ss("GCP", L('G')),
+
+	ss("Misc"),
 	ss("BGP, bird", L('B')),
+	ss("Prometheus", L('P')),
 }
 
 /*
@@ -233,11 +260,11 @@ Z, Q, V (Virtio), J (JSON),
 */
 
 var (
-	slideByID     = map[slideID]*slide{}
-	goodLetters   []letter
-	deadLetters   []letter
-	winLetter     letter
-	preWinLetters []letter // good letters except the last one
+	slideByID            = map[slideID]*slide{}
+	goodLettersWithBingo []letter
+	goodLetters          []letter // good letters except the last one
+	deadLetters          []letter
+	bingoLetter          letter
 )
 
 func init() {
@@ -250,7 +277,7 @@ func init() {
 		if v := s.letter; v != 0 {
 			saw[v]++
 			if saw[v] == 1 {
-				goodLetters = append(goodLetters, v)
+				goodLettersWithBingo = append(goodLettersWithBingo, v)
 			}
 		}
 	}
@@ -266,11 +293,11 @@ func init() {
 		}
 	}
 	// Last good letter must be unique.
-	winLetter = goodLetters[len(goodLetters)-1]
-	if saw[winLetter] > 1 {
-		panic(fmt.Sprintf("final letter %q used multiple times", string(winLetter)))
+	bingoLetter = goodLettersWithBingo[len(goodLettersWithBingo)-1]
+	if saw[bingoLetter] > 1 {
+		panic(fmt.Sprintf("final letter %q used multiple times", string(bingoLetter)))
 	}
-	preWinLetters = goodLetters[:len(goodLetters)-1]
+	goodLetters = goodLettersWithBingo[:len(goodLettersWithBingo)-1]
 }
 
 func main() {
@@ -799,16 +826,7 @@ func firstLabel(s string) string {
 	return s
 }
 
-type boardCell byte
-
-const (
-	cellBingo    boardCell = 'B' // "Bingo!" (final win)
-	cellWin      boardCell = 'w' // win path
-	cellProgress boardCell = '.'
-	cellKill     boardCell = 'X'
-)
-
-type board [5][5]boardCell // [y][x]
+type board [5][5]letter // [y][x]
 
 type pos struct{ x, y int }
 
@@ -822,6 +840,14 @@ var (
 func NewBoard(s string) board {
 	rnd := rand.New(rand.NewSource(int64(crc64.Checksum([]byte(s), crc64Table))))
 	var b board
+
+	// First pass: mark certain squares with one of these.
+	// They'll later be replaced with actual letters.
+	const (
+		cellBingo = 'B' // "Bingo!" (final win)
+		cellWin   = 'w' // win path
+		cellKill  = 'X'
+	)
 
 	// Pick final Bingo win position.
 	bp := bingoPos[rnd.Intn(len(bingoPos))]
@@ -874,6 +900,31 @@ func NewBoard(s string) board {
 		b[p2.y][p2.x] = cellKill
 		break
 	}
+
+	// Now fill with letters.
+	good := append([]letter(nil), goodLetters...)
+	dead := append([]letter(nil), deadLetters...)
+	rnd.Shuffle(len(good), reflect.Swapper(good))
+	rnd.Shuffle(len(dead), reflect.Swapper(dead))
+
+	for y := range b {
+		row := &b[y]
+		for x := range row {
+			var n letter
+			switch b[y][x] {
+			case cellBingo:
+				n = bingoLetter
+			case cellKill:
+				n = dead[0]
+				dead = dead[1:]
+			default:
+				n = good[0]
+				good = good[1:]
+			}
+			b[y][x] = n
+		}
+	}
+
 	return b
 }
 

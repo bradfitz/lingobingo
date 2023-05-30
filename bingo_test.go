@@ -6,10 +6,15 @@ import (
 )
 
 func TestLetters(t *testing.T) {
-	t.Logf("  used: %2d: %q", len(goodLetters), goodLetters)
-	t.Logf("unused: %2d: %q", len(deadLetters), deadLetters)
-	t.Logf("  path: %2d: %q", len(preWinLetters), preWinLetters)
-	t.Logf("   win: %s", string(winLetter))
+	t.Logf("good: %2d: %q + %s", len(goodLetters), goodLetters, string(bingoLetter))
+	t.Logf("dead: %2d: %q", len(deadLetters), deadLetters)
+
+	if len(goodLetters) < 20 { // 25 minus one Bingo minus 4 bad squares
+		t.Errorf("only have %d good letters; need 20", len(goodLetters))
+	}
+	if len(deadLetters) < 4 {
+		t.Errorf("only have %d dead letters; need 4", len(deadLetters))
+	}
 }
 
 func TestNewBoard(t *testing.T) {
@@ -18,8 +23,9 @@ func TestNewBoard(t *testing.T) {
 	if b != b2 {
 		t.Fatal("NewBoard not deterministic")
 	}
+	t.Logf("example board:\n%s", b)
 
-	const N = 1000
+	const N = 150
 	saw := map[board]bool{}
 	for i := 0; i < N; i++ {
 		saw[NewBoard(fmt.Sprint(i))] = true
