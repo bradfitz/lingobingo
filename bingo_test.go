@@ -6,23 +6,10 @@ import (
 )
 
 func TestLetters(t *testing.T) {
-	seen := map[letter]bool{}
-	for _, s := range slides {
-		if s.letter != 0 {
-			seen[s.letter] = true
-		}
-	}
-	for l := letter('A'); l <= 'Z'; l++ {
-		if !seen[l] {
-			t.Logf("letter %q not found", l)
-		}
-	}
-	for l := letter('0'); l <= '9'; l++ {
-		if !seen[l] {
-			t.Logf("number %q not found", l)
-		}
-	}
-	t.Logf("%d letters/numbers found", len(seen))
+	t.Logf("  used: %2d: %q", len(goodLetters), goodLetters)
+	t.Logf("unused: %2d: %q", len(deadLetters), deadLetters)
+	t.Logf("  path: %2d: %q", len(preWinLetters), preWinLetters)
+	t.Logf("   win: %s", string(winLetter))
 }
 
 func TestNewBoard(t *testing.T) {
@@ -38,8 +25,9 @@ func TestNewBoard(t *testing.T) {
 		saw[NewBoard(fmt.Sprint(i))] = true
 	}
 	t.Logf("in %d builds, saw %d unique boards", N, len(saw))
-	for b := range saw {
-		t.Logf("board\n%s\n", b)
+	if false {
+		for b := range saw {
+			t.Logf("board\n%s\n", b)
+		}
 	}
-
 }

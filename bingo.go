@@ -18,7 +18,6 @@ import (
 	"flag"
 	"fmt"
 	"hash/crc64"
-	"html"
 	"log"
 	"math/rand"
 	"net/http"
@@ -169,8 +168,7 @@ var slides = []*slide{
 	ss("WebSockets", L('W')),
 
 	ss("ACME", L('A')),
-	ss("BGP", L('B')),
-	ss("Bird", L('B')),
+	ss("BGP, bird", L('B')),
 }
 
 /*
@@ -234,15 +232,45 @@ Hold:
 Z, Q, V (Virtio), J (JSON),
 */
 
-var slideByID = map[slideID]*slide{}
+var (
+	slideByID     = map[slideID]*slide{}
+	goodLetters   []letter
+	deadLetters   []letter
+	winLetter     letter
+	preWinLetters []letter // good letters except the last one
+)
 
 func init() {
+	saw := map[letter]int{}
 	for i, s := range slides {
 		s.idx = i
 		if s.id != "" {
 			slideByID[s.id] = s
 		}
+		if v := s.letter; v != 0 {
+			saw[v]++
+			if saw[v] == 1 {
+				goodLetters = append(goodLetters, v)
+			}
+		}
 	}
+
+	for v := letter('A'); v <= 'Z'; v++ {
+		if saw[v] == 0 {
+			deadLetters = append(deadLetters, v)
+		}
+	}
+	for v := letter('0'); v <= '9'; v++ {
+		if saw[v] == 0 {
+			deadLetters = append(deadLetters, v)
+		}
+	}
+	// Last good letter must be unique.
+	winLetter = goodLetters[len(goodLetters)-1]
+	if saw[winLetter] > 1 {
+		panic(fmt.Sprintf("final letter %q used multiple times", string(winLetter)))
+	}
+	preWinLetters = goodLetters[:len(goodLetters)-1]
 }
 
 func main() {
@@ -257,7 +285,10 @@ func main() {
 	}
 
 	if !*useTailscale {
-		log.Fatal(bs.present())
+		errc := make(chan error)
+		go func() { errc <- bs.present() }()
+		go func() { errc <- http.ListenAndServe(":5859", bs) }()
+		log.Fatal(<-errc)
 	}
 	s := &tsnet.Server{
 		Dir:      "/Users/bradfitz/Library/Application Support/tsnet-lingobingo",
@@ -696,21 +727,23 @@ func (s *bingoServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	gameBoard := c.Value
 
-	who, _ := s.lc.WhoIs(r.Context(), r.RemoteAddr)
 	var overTailscale bool
-	if who != nil {
-		if firstLabel(who.Node.ComputedName) == "funnel-ingress-node" {
-			//log.Printf("Funnel headers: %q", r.Header)
-		} else {
-			overTailscale = true
-		}
-		user := who.UserProfile.LoginName
-		if i := strings.Index(user, "@"); i != -1 {
-			user = user[:i+1]
-		}
-		select {
-		case s.gameEv <- joinedUserEvent(user):
-		default:
+	if s.lc != nil {
+		who, _ := s.lc.WhoIs(r.Context(), r.RemoteAddr)
+		if who != nil {
+			if firstLabel(who.Node.ComputedName) == "funnel-ingress-node" {
+				//log.Printf("Funnel headers: %q", r.Header)
+			} else {
+				overTailscale = true
+			}
+			user := who.UserProfile.LoginName
+			if i := strings.Index(user, "@"); i != -1 {
+				user = user[:i+1]
+			}
+			select {
+			case s.gameEv <- joinedUserEvent(user):
+			default:
+			}
 		}
 	}
 
@@ -753,17 +786,13 @@ func (s *bingoServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	w.Write(out)
 
-	if false {
-		fmt.Fprintf(w, "<p>You are <b>%s</b> from <b>%s</b> (%s)</p>",
-			html.EscapeString(who.UserProfile.LoginName),
-			html.EscapeString(firstLabel(who.Node.ComputedName)),
-			r.RemoteAddr)
-	}
+	// fmt.Fprintf(w, "<p>You are <b>%s</b> from <b>%s</b> (%s)</p>",
+	// 	html.EscapeString(who.UserProfile.LoginName),
+	// 	html.EscapeString(firstLabel(who.Node.ComputedName)),
+	// 	r.RemoteAddr)
 }
 
 var rxCell = regexp.MustCompile(`<td>\?</td>`)
-
-//       <td id="c3r3" class="word">WireGuard<br>(Free Square)</td>
 
 func firstLabel(s string) string {
 	s, _, _ = strings.Cut(s, ".")
