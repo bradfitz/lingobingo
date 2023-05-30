@@ -18,6 +18,7 @@ import (
 	"flag"
 	"fmt"
 	"hash/crc64"
+	"io"
 	"log"
 	"math/rand"
 	"net/http"
@@ -29,8 +30,10 @@ import (
 
 	"github.com/gdamore/tcell/v2"
 	"github.com/mattn/go-runewidth"
+	"golang.org/x/exp/slices"
 	"golang.org/x/net/websocket"
 	"tailscale.com/client/tailscale"
+	"tailscale.com/client/tailscale/apitype"
 	"tailscale.com/ipn"
 	"tailscale.com/tsnet"
 	"tailscale.com/types/logger"
@@ -78,7 +81,12 @@ func ss(msg string, arg ...any) *slide {
 		case letter:
 			s.letter = v
 			if !strings.Contains(s.msg, "\u0332") {
-				s.msg = strings.Replace(s.msg, string(s.letter), string(s.letter)+"\u0332", 1)
+				if strings.Contains(s.msg, string(s.letter)) {
+					s.msg = strings.Replace(s.msg, string(s.letter), string(s.letter)+"\u0332", 1)
+				} else {
+					lower := strings.ToLower(string(s.letter))
+					s.msg = strings.Replace(s.msg, lower, lower+"\u0332", 1)
+				}
 			}
 		default:
 			panic(fmt.Sprintf("unknown type %T", a))
@@ -188,14 +196,23 @@ var slides = []*slide{
 	ss("WASM", L('W')),
 	ss("WebSockets", L('W')),
 
+	ss("Synology", L('S')),
+	ss("QNAP", L('Q')),
+	ss("pfSense", L('P')),
+	ss("OPNsense", L('O')),
+	ss("TrueNAS", L('T')), // XXX check spelling
+
 	ss("Clouds"),
 	ss("AWS", L('A')),
 	ss("Azure", L('A')),
 	ss("GCP", L('G')),
 
 	ss("Misc"),
-	ss("BGP, bird", L('B')),
 	ss("Prometheus", L('P')),
+	ss("BGP, bird", L('B')),
+
+	ss("🤣"),
+	ss("We all win with\n✨ Tailscale ✨"),
 }
 
 /*
@@ -313,7 +330,9 @@ func main() {
 
 	if !*useTailscale {
 		errc := make(chan error)
-		go func() { errc <- bs.present() }()
+		if *doPresent {
+			go func() { errc <- bs.present() }()
+		}
 		go func() { errc <- http.ListenAndServe(":5859", bs) }()
 		log.Fatal(<-errc)
 	}
@@ -369,9 +388,16 @@ func main() {
 	log.Printf("Showtime.")
 	time.Sleep(500 * time.Millisecond)
 
+	var httpServer http.Server
+	httpServer.Handler = bs
+	httpServer.ErrorLog = log.New(io.Discard, "", 0)
+	if *verbose {
+		httpServer.ErrorLog = nil // use default
+	}
+
 	errc := make(chan error, 1)
-	go func() { errc <- http.Serve(lnFunnel, bs) }()
-	go func() { errc <- http.Serve(ln80, bs) }()
+	go func() { errc <- httpServer.Serve(lnFunnel) }()
+	go func() { errc <- httpServer.Serve(ln80) }()
 	if *doPresent {
 		go func() { errc <- bs.present() }()
 	}
@@ -426,6 +452,8 @@ func runeWidth(r rune) int {
 	switch r {
 	case '🛝':
 		return 2
+	case '\U0001f32a': // cyclone (Funnel)
+		return 2
 	}
 	return runewidth.RuneWidth(r)
 }
@@ -437,7 +465,25 @@ func stringCells(s string) (n int) {
 	return n
 }
 
+// render either does a render now, or schedules one soon if the most previous was was too recent.
 func (bs *bingoServer) render() {
+	if bs.renderPending {
+		return
+	}
+	const tooQuick = 50 * time.Millisecond
+	if time.Since(bs.lastRender) > tooQuick {
+		bs.doRender()
+		return
+	}
+	bs.renderPending = true
+	time.AfterFunc(tooQuick, func() {
+		bs.gameEv <- bs.doRender
+	})
+}
+
+func (bs *bingoServer) doRender() {
+	bs.lastRender = time.Now()
+	bs.renderPending = false
 	curSlide := slides[bs.slide]
 	msg := curSlide.msg
 
@@ -453,23 +499,29 @@ func (bs *bingoServer) render() {
 		if letter := curSlide.letter; letter != 0 {
 			bs.letterSeen[letter] = true
 		}
-		bs.writeString(width/2-1, height-1, fmt.Sprintf("🔤%d", len(bs.letterSeen)), tcell.StyleDefault)
+		bs.writeString(width-10, height-1, fmt.Sprintf("🔤%d", len(bs.letterSeen)), tcell.StyleDefault)
 	}
 	if curSlide.OnOrAfter(slideURL) {
-		bs.writeString(0, height-1, fmt.Sprintf("🎮%d", len(bs.players)), tcell.StyleDefault)
+		bs.writeString(0, height-1,
+			fmt.Sprintf("🎮%d (%v + 🌪️%d)",
+				len(bs.players),
+				bs.tsPlayers,
+				len(bs.players)-bs.tsPlayers,
+			),
+			tcell.StyleDefault)
 		if !curSlide.OnOrAfter(slideGameOn) {
 			y := 0
 			for i := len(bs.joined) - 1; i >= 0; i-- {
 				bs.writeString(0, y, fmt.Sprintf("👋 %s", bs.joined[i]), tcell.StyleDefault)
 				y++
-				if y == 8 {
+				if y == 2 {
 					break
 				}
 			}
 		}
 	}
 	if bs.slide > 0 {
-		bs.writeString(width-4, height-1, fmt.Sprintf("🛝%d", bs.slide+1), tcell.StyleDefault)
+		bs.writeString(width-5, height-1, fmt.Sprintf("🛝%d", bs.slide+1), tcell.StyleDefault)
 	}
 	if bs.showSize {
 		bs.writeString(0, 0, "┏", tcell.StyleDefault)
@@ -539,9 +591,6 @@ func (bs *bingoServer) loop(evc <-chan tcell.Event) {
 		select {
 		case ev := <-bs.gameEv:
 			switch ev := ev.(type) {
-			case joinedUserEvent:
-				bs.joined = append(bs.joined, string(ev))
-				bs.render()
 			case func():
 				ev()
 				continue
@@ -575,6 +624,9 @@ func (bs *bingoServer) loop(evc <-chan tcell.Event) {
 						continue
 					case 'c':
 						bs.startClock()
+						continue
+					case 't':
+						bs.troll()
 						continue
 					case 's':
 						bs.showSize = !bs.showSize
@@ -612,9 +664,11 @@ func (bs *bingoServer) loop(evc <-chan tcell.Event) {
 }
 
 type bingoServer struct {
-	lc         *tailscale.LocalClient
-	gameEv     chan any
-	letterSeen map[letter]bool
+	lc            *tailscale.LocalClient
+	gameEv        chan any
+	letterSeen    map[letter]bool
+	lastRender    time.Time
+	renderPending bool
 
 	sc    tcell.Screen
 	slide int
@@ -627,6 +681,7 @@ type bingoServer struct {
 	showSize  bool
 	clock     *time.Timer
 	players   map[*player]bool
+	tsPlayers int      // number of players that are over Tailscale
 	joined    []string // latest join last
 }
 
@@ -637,8 +692,6 @@ func (s *bingoServer) addPlayer(p *player) {
 func (s *bingoServer) removePlayer(p *player) {
 	s.gameEv <- playerChangeEvent{p, false}
 }
-
-type joinedUserEvent string // "bradfitz@"
 
 type playerChangeEvent struct {
 	p      *player
@@ -683,24 +736,56 @@ func (s *bingoServer) handlePlayerChange(ev playerChangeEvent) {
 			s.players = map[*player]bool{}
 		}
 		s.players[ev.p] = true
+		if ev.p.emailAt != "" {
+			s.tsPlayers++
+		}
+		if e := ev.p.emailAt; e != "" && !slices.Contains(s.joined, e) {
+			s.joined = append(s.joined, e)
+		}
 	} else {
 		delete(s.players, ev.p)
+		if ev.p.emailAt != "" {
+			s.tsPlayers--
+		}
 	}
 	s.render()
+}
+
+func (s *bingoServer) troll() {
+	for p := range s.players {
+		select {
+		case p.ch <- "document.location.href = 'https://upload.wikimedia.org/wikipedia/en/9/9a/Trollface_non-free.png';":
+		default:
+		}
+	}
 }
 
 var crc64Table = crc64.MakeTable(crc64.ISO)
 
 type player struct {
-	ws    *websocket.Conn
-	s     *bingoServer
-	board board
-	ch    chan string // JS to eval :)
+	ws      *websocket.Conn
+	s       *bingoServer
+	board   board
+	ch      chan string // JS to eval :)
+	emailAt string      // empty for funnel, else like "bradfitz@" for over Tailscale
 }
 
 func (s *bingoServer) serveWebSocket(ws *websocket.Conn) {
 	defer ws.Close()
 	req := ws.Request()
+
+	var who *apitype.WhoIsResponse
+	var emailAt string // or empty
+	if s.lc != nil {
+		who, _ = s.lc.WhoIs(req.Context(), req.RemoteAddr)
+		if isOverTailscale(who) {
+			emailAt = who.UserProfile.LoginName
+			if i := strings.Index(emailAt, "@"); i != -1 {
+				emailAt = emailAt[:i+1]
+			}
+		}
+	}
+
 	gc, _ := req.Cookie("game")
 	var game string
 	if gc != nil {
@@ -713,9 +798,18 @@ func (s *bingoServer) serveWebSocket(ws *websocket.Conn) {
 	done := make(chan bool)
 	defer close(done)
 	board := NewBoard(game)
-	p := &player{ws: ws, s: s, board: board, ch: ch}
+	p := &player{
+		ws:      ws,
+		s:       s,
+		board:   board,
+		ch:      ch,
+		emailAt: emailAt,
+	}
 
-	log.Printf("websocket from %v, game: %v", req.RemoteAddr, game)
+	if *verbose {
+		log.Printf("websocket from %v, game: %v", req.RemoteAddr, game)
+		defer log.Printf("websocket GONE for game %v", game)
+	}
 
 	s.addPlayer(p)
 	defer s.removePlayer(p)
@@ -725,7 +819,7 @@ func (s *bingoServer) serveWebSocket(ws *websocket.Conn) {
 			select {
 			case <-done:
 				return
-			case m := <-ch:
+			case m := <-p.ch:
 				if err := websocket.Message.Send(ws, m); err != nil {
 					return
 				}
@@ -743,7 +837,7 @@ func (s *bingoServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	c, _ := r.Cookie("game")
-	if c == nil {
+	if c == nil || r.URL.Query().Get("new") == "1" {
 		buf := make([]byte, 8)
 		crand.Read(buf)
 		c = &http.Cookie{
@@ -754,24 +848,9 @@ func (s *bingoServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	gameBoard := c.Value
 
-	var overTailscale bool
+	var who *apitype.WhoIsResponse
 	if s.lc != nil {
-		who, _ := s.lc.WhoIs(r.Context(), r.RemoteAddr)
-		if who != nil {
-			if firstLabel(who.Node.ComputedName) == "funnel-ingress-node" {
-				//log.Printf("Funnel headers: %q", r.Header)
-			} else {
-				overTailscale = true
-			}
-			user := who.UserProfile.LoginName
-			if i := strings.Index(user, "@"); i != -1 {
-				user = user[:i+1]
-			}
-			select {
-			case s.gameEv <- joinedUserEvent(user):
-			default:
-			}
-		}
+		who, _ = s.lc.WhoIs(r.Context(), r.RemoteAddr)
 	}
 
 	//log.Printf("TLS=%v, Board: %q", r.TLS != nil, gameBoard)
@@ -783,6 +862,9 @@ func (s *bingoServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	hdr, _ := os.ReadFile("bingo.html")
 	js, _ := os.ReadFile("bingo.js")
+	if *useTailscale == false {
+		js = bytes.Replace(js, []byte("wss://play.bingo.ts.net/"), []byte("ws://127.0.0.1:5859/"), 1)
+	}
 	num := 0
 	out := rxCell.ReplaceAllFunc(hdr, func(_ []byte) []byte {
 		row, col := num/5, num%5
@@ -795,7 +877,7 @@ func (s *bingoServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		freeSquare := row == 2 && col == 2
 		var marked bool
 		if freeSquare {
-			if overTailscale {
+			if isOverTailscale(who) {
 				class = "word"
 				cellText = "Free Square"
 				marked = true
@@ -941,4 +1023,9 @@ func (b board) String() string {
 		buf.WriteByte('\n')
 	}
 	return buf.String()
+}
+
+// isOverTailscale reports whether who is over Tailscale (but not over Funnel).
+func isOverTailscale(who *apitype.WhoIsResponse) bool {
+	return who != nil && firstLabel(who.Node.ComputedName) != "funnel-ingress-node"
 }

@@ -37,3 +37,12 @@ func TestNewBoard(t *testing.T) {
 		}
 	}
 }
+
+func TestWidth(t *testing.T) {
+	for _, r := range "🌪️" {
+		t.Logf("rune %c (u+%04x)  = width %v", r, r, runeWidth(r))
+	}
+	for _, r := range []rune{'\U0001f32a'} {
+		t.Logf("rune %c (u+%04x)  = width %v", r, r, runeWidth(r))
+	}
+}

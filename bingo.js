@@ -34,10 +34,12 @@ document.addEventListener("DOMContentLoaded", function (event) {
                 continue;
             }
             var e = cell(row, col);
-            e.addEventListener("mousedown", function (ev) {
+            var isTouch = ("ontouchstart" in window);
+            e.addEventListener(isTouch ? "touchstart" : "mousedown", function (ev) {
                 var e = ev.target;
                 setMarked(e, !isMarked(e))
-            });
+                e.preventDefault();
+            }, true);
         }
     }
 });

@@ -1,12 +1,26 @@
 <html>
 
 <head>
+  <meta name="viewport" content="user-scalable=no" />
   <style>
     body {
       margin: 0;
       padding: 0;
       font-family: sans-serif;
       font-weight: bold;
+      touch-action: none;
+    }
+
+    table {
+      touch-action: none;
+    }
+
+    tr {
+      touch-action: none;
+    }
+
+    td {
+      touch-action: none;
     }
 
     #board {
@@ -32,6 +46,8 @@
 
     td {
       font-size: 5em;
+      cursor: pointer;
+      touch-action: manipulation;
     }
 
     td.word {
