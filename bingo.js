@@ -12,12 +12,37 @@ function cell(row, col) {
     return tr.getElementsByTagName("td")[col];
 }
 
+function setHint(e, v) {
+    if (v) {
+        e.classList.add("hint");
+    } else {
+        e.classList.remove("hint");
+    }
+}
+
 function setMarked(e, v) {
     if (v) {
         e.classList.add("marked");
+        e.classList.remove("hint");
     } else {
         e.classList.remove("marked");
     }
+}
+
+function onBingo(winLine) {
+    var tds = document.getElementsByTagName("td")
+    for (var i = 0; i < tds.length; i++) {
+        var e = tds[i];
+        if (e.classList.contains("hint")) {
+            setMarked(e, true);
+        }
+    }
+    for (var i = 0; i < winLine.length; i++) {
+        var e = cell(winLine[i][0], winLine[i][1]);
+        e.classList.remove("marked");
+        e.classList.add("win");
+    }
+
 }
 
 function isMarked(e) {
@@ -38,7 +63,6 @@ document.addEventListener("DOMContentLoaded", function (event) {
             e.addEventListener(isTouch ? "touchstart" : "mousedown", function (ev) {
                 var e = ev.target;
                 setMarked(e, !isMarked(e))
-                e.preventDefault();
             }, true);
         }
     }

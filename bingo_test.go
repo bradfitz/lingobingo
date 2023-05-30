@@ -24,6 +24,26 @@ func TestNewBoard(t *testing.T) {
 		t.Fatal("NewBoard not deterministic")
 	}
 	t.Logf("example board:\n%s", b)
+	if x, y, ok := b.find('2'); !ok || x != 0 || y != 1 {
+		t.Errorf("find = %v, %v, %v", x, y, ok)
+	}
+	if x, y, ok := b.find('S'); !ok || x != 4 || y != 3 {
+		t.Errorf("find = %v, %v, %v", x, y, ok)
+	}
+
+	b3 := NewBoard("42979a59a485a5b3")
+	t.Logf("another board:\n%s", b3)
+	bs := &bingoServer{
+		letterSeen: map[letter]bool{},
+	}
+	for _, v := range goodLettersWithBingo {
+		bs.letterSeen[v] = true
+	}
+	line := bs.boardWinLine(b)
+	if len(line) == 0 {
+		t.Errorf("no win line")
+	}
+	t.Logf("line = %v", line)
 
 	const N = 150
 	saw := map[board]bool{}

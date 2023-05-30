@@ -419,6 +419,12 @@ func (bs *bingoServer) advanceSlide(delta int) {
 
 func (bs *bingoServer) setSlide(n int) {
 	bs.slide = n
+
+	curSlide := slides[n]
+	if v := curSlide.letter; v != 0 {
+		bs.sendLetterHint(v)
+	}
+
 	bs.render()
 }
 
@@ -625,6 +631,9 @@ func (bs *bingoServer) loop(evc <-chan tcell.Event) {
 					case 'c':
 						bs.startClock()
 						continue
+					case 'b':
+						bs.bingoifyEverybody()
+						continue
 					case 't':
 						bs.troll()
 						continue
@@ -742,6 +751,11 @@ func (s *bingoServer) handlePlayerChange(ev playerChangeEvent) {
 		if e := ev.p.emailAt; e != "" && !slices.Contains(s.joined, e) {
 			s.joined = append(s.joined, e)
 		}
+		for v := range s.letterSeen {
+			if x, y, ok := ev.p.board.find(v); ok {
+				ev.p.sendMark(v, x, y)
+			}
+		}
 	} else {
 		delete(s.players, ev.p)
 		if ev.p.emailAt != "" {
@@ -760,14 +774,98 @@ func (s *bingoServer) troll() {
 	}
 }
 
+var winLines [][]pos
+
+func init() {
+	for v := 0; v < 5; v++ {
+		if v == 2 {
+			continue
+		}
+		winLines = append(winLines, []pos{
+			{v, 0}, {v, 1}, {v, 2}, {v, 3}, {v, 4},
+		}, []pos{
+			{0, v}, {1, v}, {2, v}, {3, v}, {4, v},
+		})
+	}
+}
+
+func (s *bingoServer) boardWinLine(b board) (line []pos) {
+	for _, line = range winLines {
+		if s.boardLineWins(b, line) {
+			return line
+		}
+	}
+	return nil
+}
+
+func (s *bingoServer) boardLineWins(b board, line []pos) bool {
+	for _, p := range line {
+		if !s.letterSeen[b[p.y][p.x]] {
+			return false
+		}
+	}
+	return true
+}
+
+func (s *bingoServer) bingoifyEverybody() {
+	for p := range s.players {
+		v := s.boardWinLine(p.board)
+		if len(v) != 5 {
+			continue
+		}
+		js := fmt.Sprintf("onBingo([[%v,%v],[%v,%v],[%v,%v],[%v,%v],[%v,%v]]);",
+			v[0].y, v[0].x,
+			v[1].y, v[1].x,
+			v[2].y, v[2].x,
+			v[3].y, v[3].x,
+			v[4].y, v[4].x,
+		)
+		select {
+		case p.ch <- js:
+		default:
+		}
+	}
+}
+
+func (s *bingoServer) sendLetterHint(v letter) {
+	if v == 0 {
+		return
+	}
+	for p := range s.players {
+		if p.sentHint[v] {
+			continue
+		}
+		if x, y, ok := p.board.find(v); ok && !(x == 2 && y == 2) {
+			select {
+			case p.ch <- fmt.Sprintf("setHint(cell(%v,%v),true);", y, x):
+				p.sentHint[v] = true
+			default:
+			}
+		}
+	}
+}
+
+// (run by bingoServer event loop goroutine)
+func (p *player) sendMark(v letter, x, y int) {
+	if x == 2 && y == 2 {
+		return
+	}
+	p.sentHint[v] = true
+	select {
+	case p.ch <- fmt.Sprintf("setMarked(cell(%v,%v),true);", y, x):
+	default:
+	}
+}
+
 var crc64Table = crc64.MakeTable(crc64.ISO)
 
 type player struct {
-	ws      *websocket.Conn
-	s       *bingoServer
-	board   board
-	ch      chan string // JS to eval :)
-	emailAt string      // empty for funnel, else like "bradfitz@" for over Tailscale
+	ws       *websocket.Conn
+	s        *bingoServer
+	board    board
+	ch       chan string // JS to eval :)
+	emailAt  string      // empty for funnel, else like "bradfitz@" for over Tailscale
+	sentHint map[letter]bool
 }
 
 func (s *bingoServer) serveWebSocket(ws *websocket.Conn) {
@@ -786,24 +884,20 @@ func (s *bingoServer) serveWebSocket(ws *websocket.Conn) {
 		}
 	}
 
-	gc, _ := req.Cookie("game")
-	var game string
-	if gc != nil {
-		game = gc.Value
-	} else {
-		return
-	}
+	game := strings.TrimPrefix(req.URL.Path, "/")
 
 	ch := make(chan string, 128)
+	ch <- "window.preloadImg = new Image(); window.preloadImg.src = 'https://upload.wikimedia.org/wikipedia/en/9/9a/Trollface_non-free.png';"
 	done := make(chan bool)
 	defer close(done)
 	board := NewBoard(game)
 	p := &player{
-		ws:      ws,
-		s:       s,
-		board:   board,
-		ch:      ch,
-		emailAt: emailAt,
+		ws:       ws,
+		s:        s,
+		board:    board,
+		ch:       ch,
+		emailAt:  emailAt,
+		sentHint: map[letter]bool{},
 	}
 
 	if *verbose {
@@ -855,20 +949,21 @@ func (s *bingoServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	//log.Printf("TLS=%v, Board: %q", r.TLS != nil, gameBoard)
 
-	letters := []byte("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
-
-	rnd := rand.New(rand.NewSource(int64(crc64.Checksum([]byte(gameBoard), crc64Table))))
-	rnd.Shuffle(len(letters), reflect.Swapper(letters))
+	board := NewBoard(gameBoard)
 
 	hdr, _ := os.ReadFile("bingo.html")
 	js, _ := os.ReadFile("bingo.js")
-	if *useTailscale == false {
-		js = bytes.Replace(js, []byte("wss://play.bingo.ts.net/"), []byte("ws://127.0.0.1:5859/"), 1)
+
+	wsBase := "wss://play.bingo.ts.net/"
+	if !*useTailscale {
+		wsBase = "ws://127.0.0.1:5859/"
 	}
+	js = bytes.Replace(js, []byte("wss://play.bingo.ts.net/"), []byte(wsBase+gameBoard), 1)
+
 	num := 0
 	out := rxCell.ReplaceAllFunc(hdr, func(_ []byte) []byte {
 		row, col := num/5, num%5
-		letter := letters[num]
+		letter := board[row][col]
 		num++
 
 		cellText := string(rune(letter))
@@ -910,7 +1005,18 @@ func firstLabel(s string) string {
 
 type board [5][5]letter // [y][x]
 
-type pos struct{ x, y int }
+func (b *board) find(v letter) (x, y int, ok bool) {
+	for y := range b {
+		for x := range b[y] {
+			if b[y][x] == v {
+				return x, y, true
+			}
+		}
+	}
+	return 0, 0, false
+}
+
+type pos struct{ x, y int } // (0-based col, 0-based row)
 
 var (
 	center   = pos{2, 2}
