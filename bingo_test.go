@@ -31,7 +31,6 @@ func TestNewBoard(t *testing.T) {
 	if b != b2 {
 		t.Fatal("NewBoard not deterministic")
 	}
-	t.Logf("got:\n%s", b)
 
 	const N = 1000
 	saw := map[board]bool{}
@@ -39,5 +38,8 @@ func TestNewBoard(t *testing.T) {
 		saw[NewBoard(fmt.Sprint(i))] = true
 	}
 	t.Logf("in %d builds, saw %d unique boards", N, len(saw))
+	for b := range saw {
+		t.Logf("board\n%s\n", b)
+	}
 
 }

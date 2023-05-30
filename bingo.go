@@ -21,7 +21,6 @@ import (
 	"html"
 	"log"
 	"math/rand"
-	"net"
 	"net/http"
 	"os"
 	"reflect"
@@ -31,6 +30,7 @@ import (
 
 	"github.com/gdamore/tcell/v2"
 	"github.com/mattn/go-runewidth"
+	"golang.org/x/net/websocket"
 	"tailscale.com/client/tailscale"
 	"tailscale.com/ipn"
 	"tailscale.com/tsnet"
@@ -64,7 +64,10 @@ type slideID string
 type letter byte
 type L = letter
 
-var slideGameOn = slideID("game-on")
+var (
+	slideGameOn = slideID("game-on")
+	slideURL    = slideID("url")
+)
 
 // ss constructs a slide.
 func ss(msg string, arg ...any) *slide {
@@ -108,7 +111,7 @@ var slides = []*slide{
 	ss("I say $GIBBERISH,\n"),
 	ss("I say $G\u0332IBBERISH,\nyou get G\u0332"),
 	ss("got it?"),
-	ss("play.bingo.ts.net"),
+	ss("play.bingo.ts.net", slideURL),
 	ss("play.bingo.ts.net\n\n⚡️ 😬⚡️\n"),
 	ss("play.bingo.ts.net\n\n⏳ -:--\n ", slideID("timer")),
 	ss("play.bingo.ts.net\n\n⏳ -:--\n✨ Tailscale Funnel ✨"),
@@ -394,6 +397,19 @@ func (bs *bingoServer) render() {
 		}
 		bs.writeString(width/2-1, height-1, fmt.Sprintf("🔤%d", len(bs.letterSeen)), tcell.StyleDefault)
 	}
+	if curSlide.OnOrAfter(slideURL) {
+		bs.writeString(0, height-1, fmt.Sprintf("🎮%d", len(bs.players)), tcell.StyleDefault)
+		if !curSlide.OnOrAfter(slideGameOn) {
+			y := 0
+			for i := len(bs.joined) - 1; i >= 0; i-- {
+				bs.writeString(0, y, fmt.Sprintf("👋 %s", bs.joined[i]), tcell.StyleDefault)
+				y++
+				if y == 8 {
+					break
+				}
+			}
+		}
+	}
 	if bs.slide > 0 {
 		bs.writeString(width-4, height-1, fmt.Sprintf("🛝%d", bs.slide+1), tcell.StyleDefault)
 	}
@@ -402,7 +418,7 @@ func (bs *bingoServer) render() {
 		bs.writeString(width-1, 0, "┓", tcell.StyleDefault)
 		bs.writeString(0, height-1, "┗", tcell.StyleDefault)
 		bs.writeString(width-1, height-1, "┛", tcell.StyleDefault)
-		bs.writeString(1, 1, fmt.Sprintf("%dx%d", width, height), tcell.StyleDefault.Foreground(tcell.ColorDarkGray))
+		bs.writeString(width/2-4, 1, fmt.Sprintf("%dx%d", width, height), tcell.StyleDefault.Foreground(tcell.ColorDarkGray))
 
 		stateIcon := fmt.Sprintf("%d %s 🔴", bs.notifies, bs.state)
 		switch bs.state {
@@ -465,14 +481,16 @@ func (bs *bingoServer) loop(evc <-chan tcell.Event) {
 		select {
 		case ev := <-bs.gameEv:
 			switch ev := ev.(type) {
-			case string:
-				bs.paintWithMsg(fmt.Sprintf("Player: %q", ev))
-				bs.sc.Sync()
+			case joinedUserEvent:
+				bs.joined = append(bs.joined, string(ev))
+				bs.render()
 			case func():
 				ev()
 				continue
 			case ipn.Notify:
 				bs.handleNotify(ev)
+			case playerChangeEvent:
+				bs.handlePlayerChange(ev)
 			default:
 				panic(fmt.Sprintf("unknown game event: %T", ev))
 			}
@@ -550,6 +568,23 @@ type bingoServer struct {
 	secRemain int
 	showSize  bool
 	clock     *time.Timer
+	players   map[*player]bool
+	joined    []string // latest join last
+}
+
+func (s *bingoServer) addPlayer(p *player) {
+	s.gameEv <- playerChangeEvent{p, true}
+}
+
+func (s *bingoServer) removePlayer(p *player) {
+	s.gameEv <- playerChangeEvent{p, false}
+}
+
+type joinedUserEvent string // "bradfitz@"
+
+type playerChangeEvent struct {
+	p      *player
+	online bool
 }
 
 func (s *bingoServer) startClock() {
@@ -584,9 +619,71 @@ func (s *bingoServer) handleNotify(n ipn.Notify) {
 	}
 }
 
+func (s *bingoServer) handlePlayerChange(ev playerChangeEvent) {
+	if ev.online {
+		if s.players == nil {
+			s.players = map[*player]bool{}
+		}
+		s.players[ev.p] = true
+	} else {
+		delete(s.players, ev.p)
+	}
+	s.render()
+}
+
 var crc64Table = crc64.MakeTable(crc64.ISO)
 
+type player struct {
+	ws    *websocket.Conn
+	s     *bingoServer
+	board board
+	ch    chan string // JS to eval :)
+}
+
+func (s *bingoServer) serveWebSocket(ws *websocket.Conn) {
+	defer ws.Close()
+	req := ws.Request()
+	gc, _ := req.Cookie("game")
+	var game string
+	if gc != nil {
+		game = gc.Value
+	} else {
+		return
+	}
+
+	ch := make(chan string, 128)
+	done := make(chan bool)
+	defer close(done)
+	board := NewBoard(game)
+	p := &player{ws: ws, s: s, board: board, ch: ch}
+
+	log.Printf("websocket from %v, game: %v", req.RemoteAddr, game)
+
+	s.addPlayer(p)
+	defer s.removePlayer(p)
+
+	go func() {
+		for {
+			select {
+			case <-done:
+				return
+			case m := <-ch:
+				if err := websocket.Message.Send(ws, m); err != nil {
+					return
+				}
+			}
+		}
+	}()
+
+	var message string
+	websocket.Message.Receive(ws, &message)
+}
+
 func (s *bingoServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if strings.Contains(strings.ToLower(r.Header.Get("Upgrade")), "websocket") {
+		websocket.Handler(s.serveWebSocket).ServeHTTP(w, r)
+		return
+	}
 	c, _ := r.Cookie("game")
 	if c == nil {
 		buf := make([]byte, 8)
@@ -597,21 +694,23 @@ func (s *bingoServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		http.SetCookie(w, c)
 	}
+	gameBoard := c.Value
 
 	who, _ := s.lc.WhoIs(r.Context(), r.RemoteAddr)
-	var gameBoard string
+	var overTailscale bool
 	if who != nil {
 		if firstLabel(who.Node.ComputedName) == "funnel-ingress-node" {
 			//log.Printf("Funnel headers: %q", r.Header)
-		}
-		gameBoard = who.UserProfile.LoginName
-
-		s.gameEv <- who.UserProfile.LoginName
-	} else {
-		if host, _, err := net.SplitHostPort(r.RemoteAddr); err != nil {
-			gameBoard = host
 		} else {
-			gameBoard = r.RemoteAddr
+			overTailscale = true
+		}
+		user := who.UserProfile.LoginName
+		if i := strings.Index(user, "@"); i != -1 {
+			user = user[:i+1]
+		}
+		select {
+		case s.gameEv <- joinedUserEvent(user):
+		default:
 		}
 	}
 
@@ -634,11 +733,16 @@ func (s *bingoServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 		var class string
 		freeSquare := row == 2 && col == 2
+		var marked bool
 		if freeSquare {
-			class = "word"
-			cellText = "Free Square"
+			if overTailscale {
+				class = "word"
+				cellText = "Free Square"
+				marked = true
+			} else {
+				cellText = `<a class='bonus' href="https://login.tailscale.com/admin/invite/MmtyZnexxM1">🍄</a>`
+			}
 		}
-		marked := rnd.Intn(2) == 0 || freeSquare
 		if marked {
 			class += " marked"
 		}
@@ -649,11 +753,12 @@ func (s *bingoServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	w.Write(out)
 
-	fmt.Fprintf(w, "<p>You are <b>%s</b> from <b>%s</b> (%s)</p>",
-		html.EscapeString(who.UserProfile.LoginName),
-		html.EscapeString(firstLabel(who.Node.ComputedName)),
-		r.RemoteAddr)
-
+	if false {
+		fmt.Fprintf(w, "<p>You are <b>%s</b> from <b>%s</b> (%s)</p>",
+			html.EscapeString(who.UserProfile.LoginName),
+			html.EscapeString(firstLabel(who.Node.ComputedName)),
+			r.RemoteAddr)
+	}
 }
 
 var rxCell = regexp.MustCompile(`<td>\?</td>`)
@@ -678,32 +783,12 @@ type board [5][5]boardCell // [y][x]
 
 type pos struct{ x, y int }
 
-var center = pos{2, 2}
-
-var bingoPos = []pos{
-	{1, 0},
-	{3, 0},
-	{0, 1},
-	{4, 1},
-	{0, 3},
-	{4, 3},
-	{1, 4},
-	{3, 4},
-}
-
-var ex1 = []pos{
-	{0, 0},
-	{1, 1},
-	{3, 3},
-	{4, 4},
-}
-
-var ex2 = []pos{
-	{4, 0},
-	{3, 1},
-	{1, 3},
-	{0, 4},
-}
+var (
+	center   = pos{2, 2}
+	bingoPos = []pos{{1, 0}, {3, 0}, {0, 1}, {4, 1}, {0, 3}, {4, 3}, {1, 4}, {3, 4}}
+	ex1      = []pos{{0, 0}, {1, 1}, {3, 3}, {4, 4}}
+	ex2      = []pos{{4, 0}, {3, 1}, {1, 3}, {0, 4}}
+)
 
 func NewBoard(s string) board {
 	rnd := rand.New(rand.NewSource(int64(crc64.Checksum([]byte(s), crc64Table))))
