@@ -15,6 +15,7 @@ import (
 	"bytes"
 	"context"
 	crand "crypto/rand"
+	_ "embed"
 	"flag"
 	"fmt"
 	"hash/crc64"
@@ -337,7 +338,7 @@ func main() {
 		log.Fatal(<-errc)
 	}
 	s := &tsnet.Server{
-		Dir:      "/Users/bradfitz/Library/Application Support/tsnet-lingobingo",
+		Dir:      "/Users/bradfitz/share/tsnet-lingobingo",
 		Hostname: "bingo",
 		Logf:     logger.Discard,
 	}
@@ -612,9 +613,9 @@ func (bs *bingoServer) loop(evc <-chan tcell.Event) {
 			case *tcell.EventKey:
 				k := ev.Key()
 				switch k {
-				case tcell.KeyDown, tcell.KeyRight:
+				case tcell.KeyDown, tcell.KeyRight, tcell.KeyPgDn:
 					bs.advanceSlide(+1)
-				case tcell.KeyUp, tcell.KeyLeft:
+				case tcell.KeyUp, tcell.KeyLeft, tcell.KeyPgUp:
 					bs.advanceSlide(-1)
 				case tcell.KeyRune:
 					r := ev.Rune()
@@ -925,6 +926,12 @@ func (s *bingoServer) serveWebSocket(ws *websocket.Conn) {
 	websocket.Message.Receive(ws, &message)
 }
 
+//go:embed bingo.html
+var bingoHTMLEmbed string
+
+//go:embed bingo.js
+var bingoJSEmbed string
+
 func (s *bingoServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if strings.Contains(strings.ToLower(r.Header.Get("Upgrade")), "websocket") {
 		websocket.Handler(s.serveWebSocket).ServeHTTP(w, r)
@@ -953,6 +960,12 @@ func (s *bingoServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	hdr, _ := os.ReadFile("bingo.html")
 	js, _ := os.ReadFile("bingo.js")
+	if len(hdr) == 0 {
+		hdr = []byte(bingoHTMLEmbed)
+	}
+	if len(js) == 0 {
+		js = []byte(bingoJSEmbed)
+	}
 
 	wsBase := "wss://play.bingo.ts.net/"
 	if !*useTailscale {
