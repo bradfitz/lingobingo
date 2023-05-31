@@ -432,11 +432,11 @@ func (bs *bingoServer) setSlide(n int) {
 		bs.sendLetterHint(v)
 	}
 
+	bs.render()
+
 	if curSlide.id == slideFinalWin {
 		bs.bingoifyEverybody()
 	}
-
-	bs.render()
 }
 
 func (bs *bingoServer) writeString(x, y int, s string, optStyle ...tcell.Style) {

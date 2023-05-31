@@ -3,7 +3,14 @@
 <head>
   <meta name="viewport" content="user-scalable=no" />
   <style>
+    :root {
+      --font-size: min(7vw, 7vh);
+      --font-size-top: min(7vw, 7vh);
+      --font-size-word: min(3vw, 3vh)
+    }
+
     body {
+
       margin: 0;
       padding: 0;
       font-family: sans-serif;
@@ -24,8 +31,8 @@
     }
 
     #board {
-      width: min(100vw, 100vh);
-      height: min(100vw, 100vh);
+      width: min(95vw, 95vh);
+      height: min(95vw, 95vh);
       text-align: center;
       margin: 0 auto;
     }
@@ -45,20 +52,17 @@
     }
 
     td {
-      font-size: 5em;
+      font-size: var(--font-size);
       cursor: pointer;
       touch-action: manipulation;
-      border-width: 0.1em;
-      border-style: solid;
-      border-color: white;
     }
 
     td.word {
-      font-size: 1.5em;
+      font-size: var(--font-size-word);
     }
 
     th {
-      font-size: 3em;
+      font-size: var(--font-size-top);
       color: rgb(178, 45, 48);
     }
 
@@ -67,18 +71,21 @@
       height: 16.667%;
       background: #cccccc;
       border-radius: 50%;
-      transition: 0.5s all;
+      transition: 0.5s background;
+      border-width: 0.07em;
+      border-style: solid;
+      border-color: white;
     }
 
     td.marked {
       background: #000;
       color: white;
-      transition: 0.5s all;
+      transition: 0.5s background;
     }
 
     td.hint {
       border-color: rgb(178, 45, 48);
-      transition: 0.5s all;
+      transition: 0.5s background;
     }
 
     td.win {
