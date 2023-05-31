@@ -68,8 +68,9 @@ type letter byte
 type L = letter
 
 var (
-	slideGameOn = slideID("game-on")
-	slideURL    = slideID("url")
+	slideGameOn   = slideID("game-on")
+	slideURL      = slideID("url")
+	slideFinalWin = slideID("final-win")
 )
 
 // ss constructs a slide.
@@ -193,7 +194,7 @@ var slides = []*slide{
 	ss("iOS", L('I')),
 	ss("Android", L('A')),
 	ss("FreeBSD", L('F')),
-	ss("OpenBSD", L('F')),
+	ss("OpenBSD", L('O')),
 	ss("WASM", L('W')),
 	ss("WebSockets", L('W')),
 
@@ -201,7 +202,12 @@ var slides = []*slide{
 	ss("QNAP", L('Q')),
 	ss("pfSense", L('P')),
 	ss("OPNsense", L('O')),
-	ss("TrueNAS", L('T')), // XXX check spelling
+	ss("TrueNAS", L('T')),
+
+	ss("Containers"),
+	ss("Docker", L('D')),
+	ss("Docker Desktop", L('D')),
+	ss("Kubernetes", L('K')),
 
 	ss("Clouds"),
 	ss("AWS", L('A')),
@@ -210,7 +216,7 @@ var slides = []*slide{
 
 	ss("Misc"),
 	ss("Prometheus", L('P')),
-	ss("BGP, bird", L('B')),
+	ss("BGP, bird", L('B'), slideFinalWin),
 
 	ss("🤣"),
 	ss("We all win with\n✨ Tailscale ✨"),
@@ -424,6 +430,10 @@ func (bs *bingoServer) setSlide(n int) {
 	curSlide := slides[n]
 	if v := curSlide.letter; v != 0 {
 		bs.sendLetterHint(v)
+	}
+
+	if curSlide.id == slideFinalWin {
+		bs.bingoifyEverybody()
 	}
 
 	bs.render()

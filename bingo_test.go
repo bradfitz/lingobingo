@@ -24,10 +24,10 @@ func TestNewBoard(t *testing.T) {
 		t.Fatal("NewBoard not deterministic")
 	}
 	t.Logf("example board:\n%s", b)
-	if x, y, ok := b.find('2'); !ok || x != 0 || y != 1 {
+	if x, y, ok := b.find('2'); !ok || x != 0 || y != 3 {
 		t.Errorf("find = %v, %v, %v", x, y, ok)
 	}
-	if x, y, ok := b.find('S'); !ok || x != 4 || y != 3 {
+	if x, y, ok := b.find('S'); !ok || x != 2 || y != 2 {
 		t.Errorf("find = %v, %v, %v", x, y, ok)
 	}
 
